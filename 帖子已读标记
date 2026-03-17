@@ -1,0 +1,112 @@
+// ==UserScript==
+// @name         论坛帖子已读标记器
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  点击论坛帖子后，将其标题标记为灰色并加上删除线，状态持久化。
+// @author       You
+// @match        https://www.wnflb2023.com/forum.php?*
+// @grant        GM_addStyle
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_deleteValue
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 1. 定义“已读”样式
+    GM_addStyle(`
+        .post-read {
+            color: #999 !important; /* 灰色 */
+            text-decoration: line-through !important; /* 删除线 */
+        }
+    `);
+
+    // 2. 定义用于存储已读帖子ID的键名（根据你的论坛结构调整选择器）
+    const STORAGE_KEY = 'forum_read_posts';
+    // 假设帖子链接的URL中包含唯一标识符（如帖子ID）。这是关键，你需要根据目标论坛调整。
+    // 示例选择器：假设每个帖子标题是一个带有类名 'thread-title' 的 <a> 标签
+    const POST_LINK_SELECTOR = 'a.thread-title, .topic-list a.title, a[href*="thread-"]'; // 请修改为实际选择器
+
+    // 3. 从存储中获取已读帖子ID列表
+    function getReadPostIds() {
+        const stored = GM_getValue(STORAGE_KEY, '');
+        return stored ? stored.split(',') : [];
+    }
+
+    // 4. 保存已读帖子ID列表到存储
+    function saveReadPostId(postId) {
+        let readIds = getReadPostIds();
+        if (!readIds.includes(postId)) {
+            readIds.push(postId);
+            GM_setValue(STORAGE_KEY, readIds.join(','));
+        }
+    }
+
+    // 5. 从帖子URL中提取唯一ID（这是最需要你自定义的部分！）
+    function extractPostId(url) {
+        // 方法1: 从URL路径或参数中匹配数字ID
+        // 示例: https://bbs.example.com/thread-123456-1-1.html
+        const match = url.match(/thread-(\d+)/);
+        if (match) return match[1];
+
+        // 方法2: 从URL的查询参数中获取
+        // 示例: https://bbs.example.com/forum.php?mod=viewthread&tid=7890
+        const urlObj = new URL(url, window.location.origin);
+        const tid = urlObj.searchParams.get('tid');
+        if (tid) return tid;
+
+        // 如果以上都不匹配，可以用整个URL的哈希值作为备用ID（但可能会因分页参数而变化）
+        // 更推荐你根据目标论坛的URL规律，编写更精确的匹配规则。
+        console.warn('无法从URL提取标准ID，使用完整URL作为键:', url);
+        return btoa(url); // 将URL转为base64字符串作为ID
+    }
+
+    // 6. 初始加载时，为所有已读的帖子应用样式
+    function markExistingReadPosts() {
+        const readIds = getReadPostIds();
+        const allLinks = document.querySelectorAll(POST_LINK_SELECTOR);
+
+        allLinks.forEach(link => {
+            const postId = extractPostId(link.href);
+            if (readIds.includes(postId)) {
+                link.classList.add('post-read');
+            }
+        });
+    }
+
+    // 7. 为主体的帖子链接添加点击事件监听
+    function attachClickListeners() {
+        document.addEventListener('click', function(event) {
+            // 找到被点击的、匹配我们选择器的链接
+            const clickedLink = event.target.closest(POST_LINK_SELECTOR);
+            if (clickedLink) {
+                // 阻止默认行为，然后手动跳转？通常不需要。我们希望在跳转前记录。
+                // event.preventDefault(); // 一般不需要，除非你想异步处理
+                const postId = extractPostId(clickedLink.href);
+                saveReadPostId(postId);
+                clickedLink.classList.add('post-read');
+                // 注意：点击后页面可能跳转，样式会在下次加载时由 markExistingReadPosts 重新应用。
+            }
+        });
+    }
+
+    // 8. 页面加载完成后，执行初始标记和绑定事件
+    // 使用 setTimeout 或 MutationObserver 确保动态加载的内容也能被处理
+    function init() {
+        markExistingReadPosts();
+        attachClickListeners();
+
+        // 如果需要处理动态加载的帖子列表（如AJAX分页），可以监听DOM变化
+        const observer = new MutationObserver(markExistingReadPosts);
+        observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    // 等待DOM加载完成后初始化
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})();
