@@ -1,0 +1,463 @@
+// ==UserScript==
+// @name         百家姓自动解密增强版
+// @namespace    http://tampermonkey.net/
+// @version      0.3
+// @description  自动识别页面加密中文，≥10字符才解密，链接自动转超链接，支持自定义配置
+// @author       豆包
+// @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
+// @match        https://www.wnflb2023.com/thread*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 加密字符表
+    const cipher = '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻福水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳唐罗薛伍余米贝姚孟顾尹江钟竺干';
+    // 对应明文字符
+    const plain = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-_+=/?#%&*:：';
+
+    // 配置项
+    const defaultConfig = {
+        minLength: 10,               // 最小解密长度
+        autoDecrypt: true,          // 自动解密
+        showResult: true,           // 显示解密结果
+        resultStyle: {              // 解密结果样式
+            background: '#f0f8ff',
+            color: '#0066cc',
+            padding: '4px 8px',
+            margin: '4px 0',
+            borderRadius: '4px',
+            fontSize: '14px',
+            borderLeft: '3px solid #0066cc'
+        },
+        linkStyle: {                // 链接样式
+            color: '#0066cc',
+            textDecoration: 'underline',
+            fontWeight: 'bold'
+        }
+    };
+
+    // 加载配置
+    let config = { ...defaultConfig };
+    try {
+        const savedConfig = GM_getValue('config');
+        if (savedConfig) {
+            config = { ...defaultConfig, ...savedConfig };
+        }
+    } catch (e) {
+        console.log('使用默认配置');
+    }
+
+    // 建立映射
+    const cipherMap = {};
+    const reverseMap = {};
+    for (let i = 0; i < cipher.length; i++) {
+        cipherMap[cipher[i]] = plain[i];
+        reverseMap[plain[i]] = cipher[i];
+    }
+
+    // 解密函数
+    function decodeStr(s) {
+        return s.split('').map(ch => cipherMap[ch] ?? ch).join('');
+    }
+
+    // 加密函数（用于测试）
+    function encodeStr(s) {
+        return s.split('').map(ch => reverseMap[ch] ?? ch).join('');
+    }
+
+    // URL检测
+    function isUrl(text) {
+        const trimmed = text.trim();
+        return /^(https?:\/\/|www\.)/.test(trimmed);
+    }
+
+    // 数据URL检测
+    function isDataUrl(text) {
+        return text.trim().startsWith('data:');
+    }
+
+    // 创建解密结果元素
+    function createDecryptedElement(text) {
+        const div = document.createElement('div');
+        Object.assign(div.style, config.resultStyle);
+        div.className = 'bjm-decrypt-result';
+
+        if (isUrl(text) || isDataUrl(text)) {
+            const a = document.createElement('a');
+            a.href = text;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            Object.assign(a.style, config.linkStyle);
+            a.innerHTML = '🔓 解密链接：<span class="decrypted-url">' + text + '</span>';
+            a.onclick = (e) => e.stopPropagation();
+            div.appendChild(a);
+
+            // 添加复制按钮
+            const copyBtn = document.createElement('button');
+            copyBtn.innerHTML = '📋';
+            copyBtn.title = '复制链接';
+            copyBtn.style.cssText = 'margin-left:8px;padding:2px 6px;border:1px solid #ccc;background:#fff;border-radius:3px;cursor:pointer;font-size:12px;';
+            copyBtn.onclick = (e) => {
+                e.stopPropagation();
+                navigator.clipboard.writeText(text).then(() => {
+                    copyBtn.innerHTML = '✅';
+                    setTimeout(() => copyBtn.innerHTML = '📋', 1000);
+                });
+            };
+            div.appendChild(copyBtn);
+        } else {
+            div.innerHTML = '🔓 解密结果：<span class="decrypted-text">' + text + '</span>';
+
+            // 添加复制按钮
+            const copyBtn = document.createElement('button');
+            copyBtn.innerHTML = '📋';
+            copyBtn.title = '复制内容';
+            copyBtn.style.cssText = 'margin-left:8px;padding:2px 6px;border:1px solid #ccc;background:#fff;border-radius:3px;cursor:pointer;font-size:12px;';
+            copyBtn.onclick = (e) => {
+                e.stopPropagation();
+                navigator.clipboard.writeText(text).then(() => {
+                    copyBtn.innerHTML = '✅';
+                    setTimeout(() => copyBtn.innerHTML = '📋', 1000);
+                });
+            };
+            div.appendChild(copyBtn);
+        }
+
+        return div;
+    }
+
+    // 主解密函数
+    function decodePage() {
+        if (!config.autoDecrypt) return;
+
+        const walker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode: function(node) {
+                    // 跳过已处理的节点
+                    if (node.parentElement?.classList?.contains('bjm-processed')) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    // 跳过脚本、样式等元素
+                    if (node.parentElement?.tagName?.match(/^(SCRIPT|STYLE|TEXTAREA)/i)) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            }
+        );
+
+        const textNodes = [];
+        let node;
+        while (node = walker.nextNode()) {
+            const text = node.textContent.trim();
+            if (!text) continue;
+
+            // 检查是否包含密文字符
+            let hasCipher = false;
+            for (let ch of text) {
+                if (cipherMap.hasOwnProperty(ch)) {
+                    hasCipher = true;
+                    break;
+                }
+            }
+            if (hasCipher) {
+                textNodes.push(node);
+            }
+        }
+
+        textNodes.forEach(node => {
+            const originalText = node.textContent;
+            const trimmedText = originalText.trim();
+
+            // 长度检查
+            if (trimmedText.length < config.minLength) return;
+
+            const decrypted = decodeStr(trimmedText);
+            if (decrypted === trimmedText) return;
+
+            const parent = node.parentElement;
+            if (!parent || !config.showResult) return;
+
+            // 标记已处理
+            parent.classList.add('bjm-processed');
+
+            // 创建解密结果
+            const resultElement = createDecryptedElement(decrypted);
+            parent.insertBefore(resultElement, node.nextSibling);
+        });
+    }
+
+    // 设置菜单
+    function setupMenu() {
+        // 清除旧的菜单项
+        const oldMenu = document.getElementById('bjm-menu');
+        if (oldMenu) oldMenu.remove();
+
+        // 创建菜单面板
+        const menu = document.createElement('div');
+        menu.id = 'bjm-menu';
+        menu.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: white;
+            border: 2px solid #0066cc;
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 10000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            min-width: 300px;
+            max-width: 400px;
+            display: none;
+        `;
+
+        // 标题
+        const title = document.createElement('h3');
+        title.textContent = '百家姓解密设置';
+        title.style.margin = '0 0 15px 0';
+        title.style.color = '#0066cc';
+        menu.appendChild(title);
+
+        // 自动解密开关
+        const autoToggle = createToggle('自动解密', 'autoDecrypt', config.autoDecrypt, (value) => {
+            config.autoDecrypt = value;
+            if (value) decodePage();
+        });
+        menu.appendChild(autoToggle);
+
+        // 显示结果开关
+        const showToggle = createToggle('显示结果', 'showResult', config.showResult, (value) => {
+            config.showResult = value;
+        });
+        menu.appendChild(showToggle);
+
+        // 最小长度设置
+        const lengthDiv = document.createElement('div');
+        lengthDiv.style.margin = '10px 0';
+        const lengthLabel = document.createElement('label');
+        lengthLabel.textContent = '最小解密长度: ';
+        lengthLabel.style.marginRight = '10px';
+        const lengthInput = document.createElement('input');
+        lengthInput.type = 'number';
+        lengthInput.min = 1;
+        lengthInput.max = 100;
+        lengthInput.value = config.minLength;
+        lengthInput.style.width = '60px';
+        lengthInput.onchange = () => {
+            config.minLength = parseInt(lengthInput.value) || 10;
+        };
+        lengthDiv.appendChild(lengthLabel);
+        lengthDiv.appendChild(lengthInput);
+        menu.appendChild(lengthDiv);
+
+        // 解密测试区域
+        const testDiv = document.createElement('div');
+        testDiv.style.margin = '15px 0';
+        testDiv.style.padding = '10px';
+        testDiv.style.background = '#f5f5f5';
+        testDiv.style.borderRadius = '4px';
+        const testLabel = document.createElement('div');
+        testLabel.textContent = '解密测试:';
+        testLabel.style.marginBottom = '5px';
+        testLabel.style.fontWeight = 'bold';
+        const testInput = document.createElement('input');
+        testInput.type = 'text';
+        testInput.placeholder = '输入密文测试...';
+        testInput.style.width = '100%';
+        testInput.style.padding = '5px';
+        testInput.style.boxSizing = 'border-box';
+        const testResult = document.createElement('div');
+        testResult.style.marginTop = '5px';
+        testResult.style.color = '#666';
+        testInput.oninput = () => {
+            const result = decodeStr(testInput.value);
+            testResult.textContent = '结果: ' + result;
+        };
+        testDiv.appendChild(testLabel);
+        testDiv.appendChild(testInput);
+        testDiv.appendChild(testResult);
+        menu.appendChild(testDiv);
+
+        // 按钮区域
+        const btnDiv = document.createElement('div');
+        btnDiv.style.display = 'flex';
+        btnDiv.style.gap = '10px';
+        btnDiv.style.marginTop = '15px';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = '保存设置';
+        saveBtn.style.cssText = 'padding:6px 12px;background:#0066cc;color:white;border:none;border-radius:4px;cursor:pointer;flex:1;';
+        saveBtn.onclick = () => {
+            GM_setValue('config', config);
+            menu.style.display = 'none';
+            alert('设置已保存！');
+        };
+
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '关闭';
+        closeBtn.style.cssText = 'padding:6px 12px;background:#ccc;color:#333;border:none;border-radius:4px;cursor:pointer;flex:1;';
+        closeBtn.onclick = () => {
+            menu.style.display = 'none';
+        };
+
+        const decryptNowBtn = document.createElement('button');
+        decryptNowBtn.textContent = '立即解密';
+        decryptNowBtn.style.cssText = 'padding:6px 12px;background:#28a745;color:white;border:none;border-radius:4px;cursor:pointer;flex:1;';
+        decryptNowBtn.onclick = () => {
+            decodePage();
+            menu.style.display = 'none';
+        };
+
+        btnDiv.appendChild(saveBtn);
+        btnDiv.appendChild(decryptNowBtn);
+        btnDiv.appendChild(closeBtn);
+        menu.appendChild(btnDiv);
+
+        document.body.appendChild(menu);
+
+        // 创建开关控制按钮
+        const toggleBtn = document.createElement('button');
+        toggleBtn.id = 'bjm-toggle-btn';
+        toggleBtn.innerHTML = '🔧';
+        toggleBtn.title = '解密设置';
+        toggleBtn.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 40px;
+            height: 40px;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 9999;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        `;
+        toggleBtn.onclick = (e) => {
+            e.stopPropagation();
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        };
+        document.body.appendChild(toggleBtn);
+
+        // 点击外部关闭菜单
+        document.addEventListener('click', (e) => {
+            if (!menu.contains(e.target) && e.target !== toggleBtn) {
+                menu.style.display = 'none';
+            }
+        });
+    }
+
+    // 创建开关控件
+    function createToggle(label, key, value, onChange) {
+        const div = document.createElement('div');
+        div.style.display = 'flex';
+        div.style.justifyContent = 'space-between';
+        div.style.alignItems = 'center';
+        div.style.margin = '8px 0';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = label;
+
+        const switchLabel = document.createElement('label');
+        switchLabel.style.cssText = 'position:relative;display:inline-block;width:50px;height:24px;';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = value;
+        checkbox.style.cssText = 'opacity:0;width:0;height:0;';
+
+        const slider = document.createElement('span');
+        slider.style.cssText = `
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: ${value ? '#0066cc' : '#ccc'};
+            transition: .4s;
+            border-radius: 24px;
+        `;
+
+        const circle = document.createElement('span');
+        circle.style.cssText = `
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: ${value ? '28px' : '4px'};
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        `;
+
+        checkbox.onchange = () => {
+            const newValue = checkbox.checked;
+            slider.style.backgroundColor = newValue ? '#0066cc' : '#ccc';
+            circle.style.left = newValue ? '28px' : '4px';
+            onChange(newValue);
+        };
+
+        switchLabel.appendChild(checkbox);
+        switchLabel.appendChild(slider);
+        slider.appendChild(circle);
+
+        div.appendChild(labelSpan);
+        div.appendChild(switchLabel);
+        return div;
+    }
+
+    // 初始化
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            decodePage();
+            setupMenu();
+        }, 1000);
+    });
+
+    // 监听DOM变化
+    const observer = new MutationObserver((mutations) => {
+        if (!config.autoDecrypt) return;
+        
+        let shouldDecode = false;
+        for (const mutation of mutations) {
+            if (mutation.type === 'childList') {
+                for (const node of mutation.addedNodes) {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        shouldDecode = true;
+                        break;
+                    }
+                }
+            }
+            if (shouldDecode) break;
+        }
+        
+        if (shouldDecode) {
+            setTimeout(decodePage, 100);
+        }
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+    // 导出到全局，方便调试
+    window.BJM = {
+        decode: decodeStr,
+        encode: encodeStr,
+        config: config,
+        decodePage: decodePage
+    };
+
+})();
