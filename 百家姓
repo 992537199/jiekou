@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         百家姓智能解密增强版
 // @namespace    http://tampermonkey.net/
-// @version      0.4
+// @version      0.4.1
 // @description  智能识别连续加密文本，≥10字符才解密，链接自动转超链接
 // @author       豆包
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
@@ -84,41 +84,41 @@
     function extractCipherSegments(text) {
         const segments = [];
         let currentSegment = '';
-        let inCipher = false;
+        let segmentStart = -1;
         
-        for (let ch of text) {
+        for (let i = 0; i < text.length; i++) {
+            const ch = text[i];
+            
             if (cipherSet.has(ch)) {
                 // 是密文字符
-                if (!inCipher) {
-                    inCipher = true;
-                    currentSegment = ch;
-                } else {
-                    currentSegment += ch;
+                if (currentSegment === '') {
+                    segmentStart = i;
                 }
+                currentSegment += ch;
             } else {
-                // 不是密文字符
-                if (inCipher) {
+                // 不是密文字符，结束当前段
+                if (currentSegment !== '') {
                     if (currentSegment.length >= config.minLength && 
                         shouldDecryptText(currentSegment)) {
                         segments.push({
                             text: currentSegment,
-                            start: text.indexOf(currentSegment),
-                            end: text.indexOf(currentSegment) + currentSegment.length
+                            start: segmentStart,
+                            end: i
                         });
                     }
-                    inCipher = false;
                     currentSegment = '';
+                    segmentStart = -1;
                 }
             }
         }
         
         // 处理末尾的密文段
-        if (inCipher && currentSegment.length >= config.minLength && 
+        if (currentSegment !== '' && currentSegment.length >= config.minLength && 
             shouldDecryptText(currentSegment)) {
             segments.push({
                 text: currentSegment,
-                start: text.lastIndexOf(currentSegment),
-                end: text.lastIndexOf(currentSegment) + currentSegment.length
+                start: segmentStart,
+                end: text.length
             });
         }
         
@@ -151,6 +151,7 @@
         const div = document.createElement('div');
         Object.assign(div.style, config.resultStyle);
         div.className = 'bjm-decrypt-result';
+        div.setAttribute('data-bjm-processed', 'true');
 
         if (isUrl(text) || isDataUrl(text)) {
             const a = document.createElement('a');
@@ -200,24 +201,34 @@
     function processTextNode(node) {
         const originalText = node.textContent;
         if (!originalText || originalText.trim().length === 0) {
-            return;
+            return false;
+        }
+
+        // 检查是否已经被处理过
+        if (node._bjm_processed) {
+            return false;
         }
 
         // 查找连续密文段
         const segments = extractCipherSegments(originalText);
         if (segments.length === 0) {
-            return;
+            node._bjm_processed = true;
+            return false;
         }
 
         const parent = node.parentElement;
-        if (!parent || !config.showResult) return;
+        if (!parent || !config.showResult) {
+            node._bjm_processed = true;
+            return false;
+        }
 
-        // 标记已处理
-        parent.classList.add('bjm-processed');
-
+        // 标记节点已处理
+        node._bjm_processed = true;
+        
         // 对每个密文段进行处理
         let lastIndex = 0;
         const fragment = document.createDocumentFragment();
+        let hasDecryption = false;
 
         for (const segment of segments) {
             // 添加前导普通文本
@@ -230,6 +241,8 @@
             const cipherSpan = document.createElement('span');
             cipherSpan.textContent = segment.text;
             cipherSpan.style.color = '#888';
+            cipherSpan.className = 'bjm-cipher-text';
+            cipherSpan.setAttribute('data-bjm-processed', 'true');
             fragment.appendChild(cipherSpan);
 
             // 添加解密结果
@@ -237,6 +250,7 @@
             if (decrypted !== segment.text) {
                 const resultElement = createDecryptedElement(decrypted);
                 fragment.appendChild(resultElement);
+                hasDecryption = true;
             }
 
             lastIndex = segment.end;
@@ -247,8 +261,21 @@
             fragment.appendChild(document.createTextNode(originalText.substring(lastIndex)));
         }
 
-        // 替换原节点
-        parent.replaceChild(fragment, node);
+        // 如果有解密内容，替换原节点
+        if (hasDecryption) {
+            // 将整个父元素标记为已处理
+            parent.setAttribute('data-bjm-processed', 'true');
+            parent.classList.add('bjm-processed');
+            
+            try {
+                parent.replaceChild(fragment, node);
+            } catch (e) {
+                console.warn('替换节点失败，可能已被其他脚本修改');
+            }
+            return true;
+        }
+        
+        return false;
     }
 
     // 主解密函数
@@ -261,7 +288,9 @@
             {
                 acceptNode: function(node) {
                     // 跳过已处理的节点
-                    if (node.parentElement?.classList?.contains('bjm-processed')) {
+                    if (node._bjm_processed || 
+                        node.parentElement?.hasAttribute('data-bjm-processed') ||
+                        node.parentElement?.classList?.contains('bjm-processed')) {
                         return NodeFilter.FILTER_REJECT;
                     }
                     // 跳过脚本、样式等元素
@@ -284,12 +313,21 @@
         }
 
         // 批量处理，避免频繁DOM操作
+        let processedCount = 0;
         for (const node of textNodes) {
             try {
-                processTextNode(node);
+                if (processTextNode(node)) {
+                    processedCount++;
+                }
             } catch (e) {
                 console.error('处理文本节点失败:', e);
+                // 标记为已处理，避免重复尝试
+                node._bjm_processed = true;
             }
+        }
+        
+        if (processedCount > 0) {
+            console.log(`百家姓解密: 处理了 ${processedCount} 个文本节点`);
         }
     }
 
@@ -541,9 +579,39 @@
         return div;
     }
 
+    // 清理处理标记
+    function clearProcessingMarks() {
+        // 清理所有处理标记
+        document.querySelectorAll('[data-bjm-processed]').forEach(el => {
+            el.removeAttribute('data-bjm-processed');
+        });
+        document.querySelectorAll('.bjm-processed').forEach(el => {
+            el.classList.remove('bjm-processed');
+        });
+        
+        // 清理文本节点的标记
+        const walker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+        let node;
+        while (node = walker.nextNode()) {
+            if (node._bjm_processed) {
+                delete node._bjm_processed;
+            }
+        }
+    }
+
     // 初始化
+    let isInitialized = false;
     window.addEventListener('load', () => {
+        if (isInitialized) return;
+        isInitialized = true;
+        
         setTimeout(() => {
+            console.log('百家姓解密脚本初始化...');
             decodePage();
             setupMenu();
         }, 1000);
@@ -557,10 +625,14 @@
         for (const mutation of mutations) {
             if (mutation.type === 'childList') {
                 for (const node of mutation.addedNodes) {
-                    if (node.nodeType === Node.ELEMENT_NODE || 
-                        (node.nodeType === Node.TEXT_NODE && node.textContent && node.textContent.trim().length >= config.minLength)) {
-                        shouldDecode = true;
-                        break;
+                    // 只处理新增的元素节点
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        // 检查是否已经被处理过
+                        if (!node.hasAttribute('data-bjm-processed') && 
+                            !node.classList.contains('bjm-processed')) {
+                            shouldDecode = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -568,7 +640,9 @@
         }
         
         if (shouldDecode) {
-            setTimeout(decodePage, 100);
+            // 防抖处理
+            clearTimeout(window._bjmDecodeTimer);
+            window._bjmDecodeTimer = setTimeout(decodePage, 300);
         }
     });
 
@@ -584,7 +658,8 @@
         config: config,
         decodePage: decodePage,
         shouldDecryptText: shouldDecryptText,
-        extractCipherSegments: extractCipherSegments
+        extractCipherSegments: extractCipherSegments,
+        clearProcessingMarks: clearProcessingMarks
     };
 
 })();
