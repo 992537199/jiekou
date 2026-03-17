@@ -1,59 +1,43 @@
 // ==UserScript==
-// @name         福利吧论坛 已读帖子变灰+删除线
+// @name         福利吧已读帖子标记（灰色+删除线）
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  点击wnflb2023帖子后自动标记为已读：灰色+删除线，本地记忆
+// @version      0.1
+// @description  点击wnflb2023帖子后自动标记已读：灰色+删除线
 // @author       豆包
-// @match        https://www.wnflb2023.com/*
-// @match        https://wnflb2023.com/*
-// @grant        none
+// @match        https://www.wnflb2023.com/forum-*.html
+// @match        https://www.wnflb2023.com/forum.php?mod=forumdisplay*
+// @grant        GM_setValue
+// @grant        GM_getValue
 // ==/UserScript==
 
 (function() {
     'use strict';
+    const KEY_PREFIX = 'read_post_';
 
-    // 本地存储 key
-    const STORAGE_KEY = 'wnflb_read_posts';
+    // 给所有帖子加已读样式
+    function markReadPosts() {
+        document.querySelectorAll('#threadlisttableid tbody[id^="normalthread_"], #threadlisttableid tbody[id^="stickthread_"]').forEach(tb => {
+            const tid = tb.id.replace(/\D/g, '');
+            const a = tb.querySelector('a.s.xst');
+            if (!a || !tid) return;
 
-    // 从 localStorage 读取已读帖子
-    function getReadPosts() {
-        try {
-            return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-        } catch (e) {
-            return {};
-        }
-    }
-
-    // 保存一个帖子为已读
-    function markAsRead(href) {
-        const read = getReadPosts();
-        read[href] = true;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(read));
-    }
-
-    // 给已读帖子加样式
-    function applyStyle() {
-        const read = getReadPosts();
-        const links = document.querySelectorAll('a[href*="thread-"]');
-
-        links.forEach(a => {
-            const href = a.href;
-            if (read[href]) {
+            // 本地存储判断是否已读
+            if (GM_getValue(KEY_PREFIX + tid, false)) {
                 a.style.color = '#999';
                 a.style.textDecoration = 'line-through';
             }
 
-            // 点击后立即标记并刷新样式
+            // 点击后标记为已读
             a.addEventListener('click', () => {
-                markAsRead(href);
+                GM_setValue(KEY_PREFIX + tid, true);
                 a.style.color = '#999';
                 a.style.textDecoration = 'line-through';
             });
         });
     }
 
-    // 页面加载完成后执行
+    // 页面加载完成执行
     window.addEventListener('load', () => {
-        setTimeout(applyStyle, 300);
+        setTimeout(markReadPosts, 300);
     });
 })();
