@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         百家姓智能解密增强版
 // @namespace    http://tampermonkey.net/
-// @version      0.4.1
-// @description  智能识别连续加密文本，≥10字符才解密，链接自动转超链接
+// @version      0.4.2
+// @description  智能识别连续加密文本，≥10字符才解密，链接自动转超链接，40位字符识别为磁力链接
 // @author       豆包
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
@@ -26,6 +26,7 @@
         autoDecrypt: true,          // 自动解密
         showResult: true,           // 显示解密结果
         minCipherRatio: 0.7,        // 最小密文比例（70%以上字符是密文才解密）
+        magnetLinkPrefix: 'magnet:?xt=urn:btih:',  // 磁力链接前缀
         resultStyle: {              // 解密结果样式
             background: '#f0f8ff',
             color: '#0066cc',
@@ -135,6 +136,18 @@
         return s.split('').map(ch => reverseMap[ch] ?? ch).join('');
     }
 
+    // 检查是否为磁力链接哈希
+    function isMagnetHash(text) {
+        const trimmed = text.trim();
+        
+        // 检查是否为40位字符（常见磁力链接哈希长度）
+        if (trimmed.length === 40) {
+            // 检查是否只包含十六进制字符（0-9, a-f, A-F）
+            return /^[0-9a-fA-F]{40}$/.test(trimmed);
+        }
+        return false;
+    }
+
     // URL检测
     function isUrl(text) {
         const trimmed = text.trim();
@@ -146,52 +159,96 @@
         return text.trim().startsWith('data:');
     }
 
+    // 磁力链接检测
+    function isMagnetLink(text) {
+        const trimmed = text.trim();
+        return trimmed.startsWith('magnet:?xt=urn:btih:');
+    }
+
+    // 处理解密后的文本，如果是40位字符则添加磁力链接前缀
+    function processDecryptedText(text) {
+        const trimmed = text.trim();
+        
+        if (isMagnetHash(trimmed)) {
+            // 如果是40位哈希，转换为磁力链接
+            return config.magnetLinkPrefix + trimmed;
+        } else if (isMagnetLink(trimmed)) {
+            // 已经是磁力链接，直接返回
+            return trimmed;
+        } else if (isUrl(trimmed) || isDataUrl(trimmed)) {
+            // 普通URL或数据URL
+            return trimmed;
+        } else {
+            // 其他文本
+            return text;
+        }
+    }
+
     // 创建解密结果元素
-    function createDecryptedElement(text) {
+    function createDecryptedElement(originalText) {
+        const processedText = processDecryptedText(originalText);
+        const isMagnet = isMagnetHash(originalText.trim()) || isMagnetLink(processedText);
+        const isUrlText = isUrl(processedText) || isDataUrl(processedText) || isMagnet;
+        
         const div = document.createElement('div');
         Object.assign(div.style, config.resultStyle);
         div.className = 'bjm-decrypt-result';
         div.setAttribute('data-bjm-processed', 'true');
 
-        if (isUrl(text) || isDataUrl(text)) {
+        if (isUrlText) {
             const a = document.createElement('a');
-            a.href = text;
+            
+            if (isMagnet) {
+                // 磁力链接特殊处理
+                a.href = processedText;
+                a.title = '磁力链接';
+                a.innerHTML = '🧲 磁力链接：<span class="decrypted-magnet">' + 
+                    (originalText.length > 40 ? originalText : processedText) + '</span>';
+            } else {
+                a.href = processedText;
+                a.innerHTML = '🔓 解密链接：<span class="decrypted-url">' + processedText + '</span>';
+            }
+            
             a.target = '_blank';
             a.rel = 'noopener noreferrer';
             Object.assign(a.style, config.linkStyle);
-            a.innerHTML = '🔓 解密链接：<span class="decrypted-url">' + text + '</span>';
             a.onclick = (e) => e.stopPropagation();
             div.appendChild(a);
 
-            // 添加复制按钮
-            const copyBtn = document.createElement('button');
-            copyBtn.innerHTML = '📋';
-            copyBtn.title = '复制链接';
-            copyBtn.style.cssText = 'margin-left:8px;padding:2px 6px;border:1px solid #ccc;background:#fff;border-radius:3px;cursor:pointer;font-size:12px;';
-            copyBtn.onclick = (e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(text).then(() => {
-                    copyBtn.innerHTML = '✅';
-                    setTimeout(() => copyBtn.innerHTML = '📋', 1000);
-                });
-            };
-            div.appendChild(copyBtn);
-        } else {
-            div.innerHTML = '🔓 解密结果：<span class="decrypted-text">' + text + '</span>';
+            // 添加磁力链接图标
+            if (isMagnet) {
+                const magnetIcon = document.createElement('span');
+                magnetIcon.innerHTML = ' 🧲';
+                magnetIcon.title = '磁力链接';
+                a.prepend(magnetIcon);
+            }
 
-            // 添加复制按钮
-            const copyBtn = document.createElement('button');
-            copyBtn.innerHTML = '📋';
-            copyBtn.title = '复制内容';
-            copyBtn.style.cssText = 'margin-left:8px;padding:2px 6px;border:1px solid #ccc;background:#fff;border-radius:3px;cursor:pointer;font-size:12px;';
-            copyBtn.onclick = (e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(text).then(() => {
-                    copyBtn.innerHTML = '✅';
-                    setTimeout(() => copyBtn.innerHTML = '📋', 1000);
-                });
-            };
-            div.appendChild(copyBtn);
+        } else {
+            // 普通文本
+            div.innerHTML = '🔓 解密结果：<span class="decrypted-text">' + processedText + '</span>';
+        }
+
+        // 添加复制按钮
+        const copyBtn = document.createElement('button');
+        copyBtn.innerHTML = '📋';
+        copyBtn.title = '复制内容';
+        copyBtn.style.cssText = 'margin-left:8px;padding:2px 6px;border:1px solid #ccc;background:#fff;border-radius:3px;cursor:pointer;font-size:12px;';
+        copyBtn.onclick = (e) => {
+            e.stopPropagation();
+            const textToCopy = isMagnet ? processedText : processedText;
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                copyBtn.innerHTML = '✅';
+                setTimeout(() => copyBtn.innerHTML = '📋', 1000);
+            });
+        };
+        div.appendChild(copyBtn);
+
+        // 如果是磁力链接，添加额外的哈希显示
+        if (isMagnetHash(originalText.trim())) {
+            const hashDiv = document.createElement('div');
+            hashDiv.style.cssText = 'margin-top:4px;padding:2px 4px;background:#fff8dc;border:1px dashed #ffcc00;border-radius:3px;font-family:monospace;font-size:12px;word-break:break-all;';
+            hashDiv.innerHTML = `<span style="color:#666;">哈希值:</span> ${originalText.trim()}`;
+            div.appendChild(hashDiv);
         }
 
         return div;
@@ -417,6 +474,39 @@
         ratioDiv.appendChild(ratioPercent);
         menu.appendChild(ratioDiv);
 
+        // 磁力链接设置
+        const magnetDiv = document.createElement('div');
+        magnetDiv.style.margin = '10px 0';
+        magnetDiv.style.padding = '10px';
+        magnetDiv.style.background = '#f0f8ff';
+        magnetDiv.style.borderRadius = '4px';
+        const magnetLabel = document.createElement('label');
+        magnetLabel.innerHTML = '<strong>🔗 磁力链接设置</strong>';
+        magnetLabel.style.display = 'block';
+        magnetLabel.style.marginBottom = '8px';
+        const magnetPrefixLabel = document.createElement('label');
+        magnetPrefixLabel.textContent = '前缀: ';
+        magnetPrefixLabel.style.marginRight = '5px';
+        const magnetPrefixInput = document.createElement('input');
+        magnetPrefixInput.type = 'text';
+        magnetPrefixInput.value = config.magnetLinkPrefix;
+        magnetPrefixInput.style.width = '200px';
+        magnetPrefixInput.style.padding = '3px 5px';
+        magnetPrefixInput.style.marginRight = '5px';
+        magnetPrefixInput.onchange = () => {
+            config.magnetLinkPrefix = magnetPrefixInput.value || 'magnet:?xt=urn:btih:';
+        };
+        magnetDiv.appendChild(magnetLabel);
+        magnetDiv.appendChild(magnetPrefixLabel);
+        magnetDiv.appendChild(magnetPrefixInput);
+        const magnetInfo = document.createElement('div');
+        magnetInfo.style.marginTop = '5px';
+        magnetInfo.style.fontSize = '12px';
+        magnetInfo.style.color = '#666';
+        magnetInfo.textContent = '40位十六进制字符将自动转为磁力链接';
+        magnetDiv.appendChild(magnetInfo);
+        menu.appendChild(magnetDiv);
+
         // 解密测试区域
         const testDiv = document.createElement('div');
         testDiv.style.margin = '15px 0';
@@ -440,7 +530,17 @@
             const result = decodeStr(testInput.value);
             const cipherCount = [...testInput.value].filter(ch => cipherSet.has(ch)).length;
             const ratio = testInput.value.length > 0 ? cipherCount / testInput.value.length : 0;
-            testResult.innerHTML = `结果: ${result}<br>密文比例: ${Math.round(ratio * 100)}%`;
+            const isMagnet = isMagnetHash(result);
+            const finalResult = isMagnet ? (config.magnetLinkPrefix + result) : result;
+            
+            let resultHtml = `结果: ${finalResult}`;
+            if (isMagnet) {
+                resultHtml += `<br><span style="color:#ff6600;">🔍 识别为磁力链接哈希，已添加前缀</span>`;
+            }
+            resultHtml += `<br>密文比例: ${Math.round(ratio * 100)}%`;
+            resultHtml += `<br>原始长度: ${testInput.value.length} 字符`;
+            
+            testResult.innerHTML = resultHtml;
         };
         testDiv.appendChild(testLabel);
         testDiv.appendChild(testInput);
@@ -659,7 +759,9 @@
         decodePage: decodePage,
         shouldDecryptText: shouldDecryptText,
         extractCipherSegments: extractCipherSegments,
-        clearProcessingMarks: clearProcessingMarks
+        clearProcessingMarks: clearProcessingMarks,
+        isMagnetHash: isMagnetHash,
+        processDecryptedText: processDecryptedText
     };
 
 })();
