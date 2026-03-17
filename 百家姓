@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         百家姓自动解密增强版
+// @name         百家姓智能解密增强版
 // @namespace    http://tampermonkey.net/
-// @version      0.3
-// @description  自动识别页面加密中文，≥10字符才解密，链接自动转超链接，支持自定义配置
+// @version      0.4
+// @description  智能识别连续加密文本，≥10字符才解密，链接自动转超链接
 // @author       豆包
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
@@ -25,6 +25,7 @@
         minLength: 10,               // 最小解密长度
         autoDecrypt: true,          // 自动解密
         showResult: true,           // 显示解密结果
+        minCipherRatio: 0.7,        // 最小密文比例（70%以上字符是密文才解密）
         resultStyle: {              // 解密结果样式
             background: '#f0f8ff',
             color: '#0066cc',
@@ -53,6 +54,7 @@
     }
 
     // 建立映射
+    const cipherSet = new Set(cipher);
     const cipherMap = {};
     const reverseMap = {};
     for (let i = 0; i < cipher.length; i++) {
@@ -60,7 +62,70 @@
         reverseMap[plain[i]] = cipher[i];
     }
 
-    // 解密函数
+    // 判断文本是否需要解密
+    function shouldDecryptText(text) {
+        if (!text || text.length < config.minLength) {
+            return false;
+        }
+
+        // 计算密文字符比例
+        let cipherCount = 0;
+        for (let ch of text) {
+            if (cipherSet.has(ch)) {
+                cipherCount++;
+            }
+        }
+        
+        const cipherRatio = cipherCount / text.length;
+        return cipherRatio >= config.minCipherRatio;
+    }
+
+    // 提取文本中的连续密文段
+    function extractCipherSegments(text) {
+        const segments = [];
+        let currentSegment = '';
+        let inCipher = false;
+        
+        for (let ch of text) {
+            if (cipherSet.has(ch)) {
+                // 是密文字符
+                if (!inCipher) {
+                    inCipher = true;
+                    currentSegment = ch;
+                } else {
+                    currentSegment += ch;
+                }
+            } else {
+                // 不是密文字符
+                if (inCipher) {
+                    if (currentSegment.length >= config.minLength && 
+                        shouldDecryptText(currentSegment)) {
+                        segments.push({
+                            text: currentSegment,
+                            start: text.indexOf(currentSegment),
+                            end: text.indexOf(currentSegment) + currentSegment.length
+                        });
+                    }
+                    inCipher = false;
+                    currentSegment = '';
+                }
+            }
+        }
+        
+        // 处理末尾的密文段
+        if (inCipher && currentSegment.length >= config.minLength && 
+            shouldDecryptText(currentSegment)) {
+            segments.push({
+                text: currentSegment,
+                start: text.lastIndexOf(currentSegment),
+                end: text.lastIndexOf(currentSegment) + currentSegment.length
+            });
+        }
+        
+        return segments;
+    }
+
+    // 解密单个字符串
     function decodeStr(s) {
         return s.split('').map(ch => cipherMap[ch] ?? ch).join('');
     }
@@ -131,6 +196,61 @@
         return div;
     }
 
+    // 处理文本节点
+    function processTextNode(node) {
+        const originalText = node.textContent;
+        if (!originalText || originalText.trim().length === 0) {
+            return;
+        }
+
+        // 查找连续密文段
+        const segments = extractCipherSegments(originalText);
+        if (segments.length === 0) {
+            return;
+        }
+
+        const parent = node.parentElement;
+        if (!parent || !config.showResult) return;
+
+        // 标记已处理
+        parent.classList.add('bjm-processed');
+
+        // 对每个密文段进行处理
+        let lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+
+        for (const segment of segments) {
+            // 添加前导普通文本
+            if (segment.start > lastIndex) {
+                const textBefore = originalText.substring(lastIndex, segment.start);
+                fragment.appendChild(document.createTextNode(textBefore));
+            }
+
+            // 添加原密文
+            const cipherSpan = document.createElement('span');
+            cipherSpan.textContent = segment.text;
+            cipherSpan.style.color = '#888';
+            fragment.appendChild(cipherSpan);
+
+            // 添加解密结果
+            const decrypted = decodeStr(segment.text);
+            if (decrypted !== segment.text) {
+                const resultElement = createDecryptedElement(decrypted);
+                fragment.appendChild(resultElement);
+            }
+
+            lastIndex = segment.end;
+        }
+
+        // 添加剩余文本
+        if (lastIndex < originalText.length) {
+            fragment.appendChild(document.createTextNode(originalText.substring(lastIndex)));
+        }
+
+        // 替换原节点
+        parent.replaceChild(fragment, node);
+    }
+
     // 主解密函数
     function decodePage() {
         if (!config.autoDecrypt) return;
@@ -145,7 +265,11 @@
                         return NodeFilter.FILTER_REJECT;
                     }
                     // 跳过脚本、样式等元素
-                    if (node.parentElement?.tagName?.match(/^(SCRIPT|STYLE|TEXTAREA)/i)) {
+                    if (node.parentElement?.tagName?.match(/^(SCRIPT|STYLE|TEXTAREA|INPUT|BUTTON)/i)) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    // 跳过太短的文本
+                    if (!node.textContent || node.textContent.trim().length < config.minLength) {
                         return NodeFilter.FILTER_REJECT;
                     }
                     return NodeFilter.FILTER_ACCEPT;
@@ -156,50 +280,21 @@
         const textNodes = [];
         let node;
         while (node = walker.nextNode()) {
-            const text = node.textContent.trim();
-            if (!text) continue;
-
-            // 检查是否包含密文字符
-            let hasCipher = false;
-            for (let ch of text) {
-                if (cipherMap.hasOwnProperty(ch)) {
-                    hasCipher = true;
-                    break;
-                }
-            }
-            if (hasCipher) {
-                textNodes.push(node);
-            }
+            textNodes.push(node);
         }
 
-        textNodes.forEach(node => {
-            const originalText = node.textContent;
-            const trimmedText = originalText.trim();
-
-            // 长度检查
-            if (trimmedText.length < config.minLength) return;
-
-            const decrypted = decodeStr(trimmedText);
-            if (decrypted === trimmedText) return;
-
-            const parent = node.parentElement;
-            if (!parent || !config.showResult) return;
-
-            // 标记已处理
-            parent.classList.add('bjm-processed');
-
-            // 创建解密结果
-            const resultElement = createDecryptedElement(decrypted);
-            parent.insertBefore(resultElement, node.nextSibling);
-        });
+        // 批量处理，避免频繁DOM操作
+        for (const node of textNodes) {
+            try {
+                processTextNode(node);
+            } catch (e) {
+                console.error('处理文本节点失败:', e);
+            }
+        }
     }
 
     // 设置菜单
     function setupMenu() {
-        // 清除旧的菜单项
-        const oldMenu = document.getElementById('bjm-menu');
-        if (oldMenu) oldMenu.remove();
-
         // 创建菜单面板
         const menu = document.createElement('div');
         menu.id = 'bjm-menu';
@@ -213,7 +308,7 @@
             padding: 15px;
             z-index: 10000;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            min-width: 300px;
+            min-width: 320px;
             max-width: 400px;
             display: none;
         `;
@@ -257,6 +352,33 @@
         lengthDiv.appendChild(lengthInput);
         menu.appendChild(lengthDiv);
 
+        // 密文比例设置
+        const ratioDiv = document.createElement('div');
+        ratioDiv.style.margin = '10px 0';
+        const ratioLabel = document.createElement('label');
+        ratioLabel.textContent = '最小密文比例: ';
+        ratioLabel.style.marginRight = '10px';
+        const ratioInput = document.createElement('input');
+        ratioInput.type = 'number';
+        ratioInput.min = 0.1;
+        ratioInput.max = 1;
+        ratioInput.step = 0.1;
+        ratioInput.value = config.minCipherRatio;
+        ratioInput.style.width = '60px';
+        ratioInput.onchange = () => {
+            config.minCipherRatio = parseFloat(ratioInput.value) || 0.7;
+        };
+        const ratioPercent = document.createElement('span');
+        ratioPercent.textContent = ' (' + (config.minCipherRatio * 100) + '%)';
+        ratioInput.oninput = () => {
+            const value = parseFloat(ratioInput.value) || 0.7;
+            ratioPercent.textContent = ' (' + Math.round(value * 100) + '%)';
+        };
+        ratioDiv.appendChild(ratioLabel);
+        ratioDiv.appendChild(ratioInput);
+        ratioDiv.appendChild(ratioPercent);
+        menu.appendChild(ratioDiv);
+
         // 解密测试区域
         const testDiv = document.createElement('div');
         testDiv.style.margin = '15px 0';
@@ -278,7 +400,9 @@
         testResult.style.color = '#666';
         testInput.oninput = () => {
             const result = decodeStr(testInput.value);
-            testResult.textContent = '结果: ' + result;
+            const cipherCount = [...testInput.value].filter(ch => cipherSet.has(ch)).length;
+            const ratio = testInput.value.length > 0 ? cipherCount / testInput.value.length : 0;
+            testResult.innerHTML = `结果: ${result}<br>密文比例: ${Math.round(ratio * 100)}%`;
         };
         testDiv.appendChild(testLabel);
         testDiv.appendChild(testInput);
@@ -433,7 +557,8 @@
         for (const mutation of mutations) {
             if (mutation.type === 'childList') {
                 for (const node of mutation.addedNodes) {
-                    if (node.nodeType === Node.ELEMENT_NODE) {
+                    if (node.nodeType === Node.ELEMENT_NODE || 
+                        (node.nodeType === Node.TEXT_NODE && node.textContent && node.textContent.trim().length >= config.minLength)) {
                         shouldDecode = true;
                         break;
                     }
@@ -457,7 +582,9 @@
         decode: decodeStr,
         encode: encodeStr,
         config: config,
-        decodePage: decodePage
+        decodePage: decodePage,
+        shouldDecryptText: shouldDecryptText,
+        extractCipherSegments: extractCipherSegments
     };
 
 })();
