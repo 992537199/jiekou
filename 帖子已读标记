@@ -4,7 +4,7 @@
 // @version      1.0
 // @description  点击论坛帖子后，将其标题标记为灰色并加上删除线，状态持久化。
 // @author       You
-// @match        https://www.wnflb2023.com/forum.php?*
+// @match        https://www.wnflb2023.com/*
 // @grant        GM_addStyle
 // @grant        GM_setValue
 // @grant        GM_getValue
