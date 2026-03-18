@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         福利吧 隐藏链接&白色文字高亮
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      2.0
 // @description  显示隐藏在表情/图片里的链接、白色隐藏文字，标红+蓝色高亮
-// @author       豆包
+// @author       优化版
 // @match        *://www.wnflb2023.com/*
 // @match        *://fuliba*/*
 // @grant        none
@@ -11,62 +11,183 @@
 
 (function() {
     'use strict';
-    const hideLinks = [];
-
-    // 1. 处理：链接里只有图片、没有文字 → 隐藏链接
-    const aTags = document.querySelectorAll('a[href]');
-    aTags.forEach(a => {
-        const href = a.href.trim();
-        if (!href || href === '#') return;
-
-        // 链接内部只有图片，没有文本
-        const text = a.textContent.trim();
-        const hasImg = a.querySelector('img') !== null;
-
-        if (hasImg && text === '') {
-            // 标红显示链接
-            a.style.color = '#ff0000';
-            a.style.fontWeight = 'bold';
-            a.innerText = ' 【隐藏链接：' + href + '】';
-            hideLinks.push(href);
-        }
-    });
-
-    // 2. 处理：文字颜色是白色 → 改成蓝色
-    const allTextNodes = document.querySelectorAll('*:not(script):not(style):not(noscript):not(title)');
-    allTextNodes.forEach(el => {
-        const color = getComputedStyle(el).color;
-        const text = el.textContent.trim();
-        if (!text) return;
-
-        // rgb 白色判断
-        if (color === 'rgb(255, 255, 255)' || color === '#ffffff') {
-            el.style.color = '#0000ff' !important;
-            el.style.backgroundColor = '#f0f0f0';
-        }
-    });
-
-    // 3. 在帖子底部统一展示所有隐藏链接
-    const postContent = document.querySelector('.t_f');
-    if (postContent && hideLinks.length > 0) {
-        const div = document.createElement('div');
-        div.style.marginTop = '15px';
-        div.style.padding = '10px';
-        div.style.border = '1px dashed red';
-        div.style.color = '#ff0000';
-        div.style.fontSize = '14px';
-
-        let html = '<strong>🔍 本帖检测到隐藏链接：</strong><br>';
-        hideLinks.forEach(link => {
-            // 判断是不是网址
-            if (link.startsWith('http')) {
-                html += `<a href="${link}" target="_blank" style="color:blue;">${link}</a><br>`;
-            } else {
-                html += link + '<br>';
+    
+    // 等待页面加载完成
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', processPage);
+    } else {
+        processPage();
+    }
+    
+    function processPage() {
+        const hiddenLinks = new Set(); // 使用Set去重
+        const processedElements = new WeakSet(); // 避免重复处理
+        
+        // 1. 处理隐藏链接（图片/表情内的链接）
+        document.querySelectorAll('a[href]').forEach(a => {
+            if (processedElements.has(a)) return;
+            processedElements.add(a);
+            
+            const href = a.getAttribute('href')?.trim();
+            if (!href || href === '#' || href === 'javascript:void(0)') return;
+            
+            const hasVisibleText = a.textContent.trim().length > 0;
+            const hasImg = a.querySelector('img, .emot, .emoji') !== null;
+            const hasSpanWithImg = a.querySelector('span img') !== null;
+            const isDisplayNone = getComputedStyle(a).display === 'none';
+            
+            // 如果是隐藏链接（只有图片/表情，或者display:none）
+            if ((hasImg && !hasVisibleText) || isDisplayNone || hasSpanWithImg) {
+                a.style.cssText = 'color: #ff0000 !important; font-weight: bold !important; text-decoration: underline !important;';
+                
+                // 添加提示
+                const hint = document.createElement('span');
+                hint.textContent = '🔗';
+                hint.style.cssText = 'margin-left: 5px; color: red; font-size: 12px;';
+                a.appendChild(hint);
+                
+                hiddenLinks.add(href);
             }
         });
-
-        div.innerHTML = html;
-        postContent.parentNode.appendChild(div);
+        
+        // 2. 处理白色隐藏文字
+        function processWhiteText(element) {
+            if (processedElements.has(element) || element.nodeType !== 1) return;
+            
+            const style = getComputedStyle(element);
+            const textColor = style.color;
+            
+            // 判断是否为白色（包括透明但背景也是白色的情况）
+            const isWhiteText = 
+                textColor === 'rgb(255, 255, 255)' || 
+                textColor === '#ffffff' ||
+                textColor === '#fff' ||
+                (parseFloat(style.opacity) === 0 && style.backgroundColor === 'rgb(255, 255, 255)');
+            
+            if (isWhiteText && element.textContent.trim()) {
+                element.style.cssText = `
+                    color: #0000ff !important;
+                    background-color: #ffffcc !important;
+                    border: 1px dashed #ccc !important;
+                    padding: 2px 4px !important;
+                    border-radius: 3px !important;
+                `;
+                processedElements.add(element);
+            }
+            
+            // 递归处理子元素
+            if (element.children) {
+                Array.from(element.children).forEach(child => {
+                    processWhiteText(child);
+                });
+            }
+        }
+        
+        // 从常见的内容区域开始处理
+        const contentSelectors = [
+            '.t_f', '.postmessage', '.article-content',
+            '.content', '.post-content', '.thread-content',
+            '.bbs-content', '[id*="postmessage"]', '[class*="content"]'
+        ];
+        
+        let contentArea = null;
+        for (const selector of contentSelectors) {
+            contentArea = document.querySelector(selector);
+            if (contentArea) break;
+        }
+        
+        // 如果没有找到特定内容区域，处理整个body
+        const rootElement = contentArea || document.body;
+        processWhiteText(rootElement);
+        
+        // 3. 在页面底部展示所有隐藏链接
+        if (hiddenLinks.size > 0) {
+            // 创建展示区域
+            const linkContainer = document.createElement('div');
+            linkContainer.style.cssText = `
+                position: fixed;
+                bottom: 10px;
+                right: 10px;
+                max-width: 500px;
+                max-height: 300px;
+                overflow-y: auto;
+                background: white;
+                border: 2px solid red;
+                padding: 15px;
+                z-index: 999999;
+                box-shadow: 0 0 10px rgba(0,0,0,0.3);
+                border-radius: 8px;
+                font-size: 13px;
+            `;
+            
+            let html = '<div style="color: #d00; font-weight: bold; margin-bottom: 10px;">🔍 检测到隐藏链接：</div>';
+            Array.from(hiddenLinks).forEach(link => {
+                html += `
+                    <div style="margin-bottom: 8px; word-break: break-all;">
+                        <a href="${link}" target="_blank" style="color: #00a; text-decoration: none;">
+                            ${link.length > 60 ? link.substring(0, 60) + '...' : link}
+                        </a>
+                        <span style="color: #666; font-size: 12px; margin-left: 5px;">
+                            (点击在新标签页打开)
+                        </span>
+                    </div>
+                `;
+            });
+            
+            // 添加关闭按钮
+            html += `
+                <div style="text-align: center; margin-top: 15px;">
+                    <button id="closeHiddenLinks" style="
+                        padding: 5px 15px;
+                        background: #d00;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        cursor: pointer;
+                    ">关闭</button>
+                </div>
+            `;
+            
+            linkContainer.innerHTML = html;
+            document.body.appendChild(linkContainer);
+            
+            // 关闭按钮事件
+            linkContainer.querySelector('#closeHiddenLinks').addEventListener('click', function() {
+                document.body.removeChild(linkContainer);
+            });
+            
+            // 5秒后自动最小化
+            setTimeout(() => {
+                linkContainer.style.maxHeight = '40px';
+                linkContainer.style.overflow = 'hidden';
+                linkContainer.innerHTML = '<div style="color: red; cursor: pointer;" id="expandLinks">📁 显示隐藏链接(' + hiddenLinks.size + '个)</div>';
+                linkContainer.querySelector('#expandLinks').addEventListener('click', function() {
+                    linkContainer.style.maxHeight = '300px';
+                    linkContainer.style.overflow = 'auto';
+                    linkContainer.innerHTML = html;
+                    linkContainer.querySelector('#closeHiddenLinks').addEventListener('click', function() {
+                        document.body.removeChild(linkContainer);
+                    });
+                });
+            }, 5000);
+        }
+        
+        // 4. 添加页面样式增强
+        const style = document.createElement('style');
+        style.textContent = `
+            a[href*=".baidu."],
+            a[href*="pan.baidu"],
+            a[href*=".aliyundrive."],
+            a[href*=".lanzou"],
+            a[href*="cloud.189"] {
+                background-color: #e8f4ff !important;
+                padding: 2px 5px !important;
+                border-radius: 3px !important;
+                border-left: 3px solid #4a90e2 !important;
+            }
+        `;
+        document.head.appendChild(style);
+        
+        console.log('隐藏链接高亮脚本已加载，发现隐藏链接：', hiddenLinks.size);
     }
 })();
