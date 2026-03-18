@@ -1,697 +1,200 @@
 // ==UserScript==
-// @name         福利吧 隐藏外链&白色文字高亮优化版
-// @namespace    http://tampermonkey.net/
-// @version      4.0
-// @description  高亮显示隐藏的外链和白色文字，自动过滤网站内部链接
-// @author       优化版
+// @name         帖子隐藏内容高亮器
+// @namespace    https://github.com/your-namespace/
+// @version      1.1
+// @description  自动检测并高亮显示帖子中被隐藏的文本和链接。专门处理颜色隐藏、同背景色隐藏以及隐藏在图片表情中的链接。
+// @author       基于“福利吧论坛 - 好孩子看得见”重构
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
-// @grant        none
+// @grant        GM_addStyle
+// @grant        GM_registerMenuCommand
+// @grant        GM_notification
+// @license      MIT
 // ==/UserScript==
 
 (function() {
     'use strict';
-    
-    // 配置
+
+    // 核心配置
     const CONFIG = {
-        linkHighlightColor: '#ff3333',
-        linkBackgroundColor: '#fff0f0',
-        whiteTextRevealColor: '#0066cc',
-        whiteTextBackgroundColor: '#f0f8ff',
-        summaryPanelBgColor: '#fff9e6',
-        summaryPanelBorderColor: '#ff9900'
+        HIGHLIGHT_COLOR: '#FF1493', // 高亮文本颜色 (深粉红)
+        BG_COLOR: 'transparent',     // 高亮背景色
+        BORDER: '2px dashed #FF4500', // 高亮边框
+        MARKER_TEXT: ' 🔍',          // 在隐藏链接旁添加的标记
+        HIDDEN_IMG_TITLE: '[隐]',   // 为隐藏链接的图片添加的title前缀
+        ENABLE_NOTIFICATION: true,  // 处理完成后是否显示桌面通知
+        DETECT_PATTERNS: [
+            'xiaohuangniao.me',
+            'pan.baidu.com/s/',
+            'www.aliyundrive.com/s/',
+            'cloud.189.cn/web/share',
+            // 可在此处添加其他常见的隐藏链接模式
+        ]
     };
-    
-    // 网站域名
-    const SITE_DOMAIN = 'www.wnflb2023.com';
-    const SITE_DOMAINS = [
-        'wnflb2023.com',
-        'fuliba.net',
-        'fuliba.com'
-    ];
-    
-    // 判断是否为外部链接
-    function isExternalLink(url) {
+
+    // 添加核心样式
+    GM_addStyle(`
+        /* 高亮被隐藏的文本元素 */
+        .hidden-text-highlighter {
+            color: ${CONFIG.HIGHLIGHT_COLOR} !important;
+            background-color: ${CONFIG.BG_COLOR} !important;
+            font-weight: bold !important;
+            text-shadow: none !important;
+            border: ${CONFIG.BORDER} !important;
+            padding: 1px 3px !important;
+            border-radius: 3px !important;
+        }
+        /* 高亮被隐藏的链接（图片形式） */
+        a.hidden-link-highlighter {
+            position: relative;
+            outline: 3px solid #FFD700 !important; /* 金色边框 */
+            display: inline-block;
+        }
+        a.hidden-link-highlighter::after {
+            content: "${CONFIG.MARKER_TEXT}";
+            color: red;
+            font-weight: bold;
+            font-size: 0.8em;
+            margin-left: 4px;
+            vertical-align: super;
+        }
+    `);
+
+    /************************
+     * 核心工具函数
+     ************************/
+    /**
+     * 判断颜色是否为“浅色”（接近白色，肉眼难辨）
+     * @param {string} colorStr - CSS颜色字符串，如 'rgb(255, 255, 255)'
+     * @returns {boolean}
+     */
+    function isLightColor(colorStr) {
+        if (!colorStr || colorStr === 'transparent') return false;
+        const match = colorStr.match(/\d+/g);
+        if (!match || match.length < 3) return false;
+        const [r, g, b] = match.map(Number);
+        // 计算亮度 (灰度值) 公式: 0.299*R + 0.587*G + 0.114*B
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        return luminance > 200; // 阈值可调 (0-255, 越高越“白”)
+    }
+
+    /**
+     * 判断两个颜色是否“相同或过于接近”
+     * @param {string} color1
+     * @param {string} color2
+     * @returns {boolean}
+     */
+    function isColorSameOrSimilar(color1, color2) {
+        if (color1 === color2) return true;
+        // 简化的相似度判断：如果都是浅色，也视为“隐藏”
+        return isLightColor(color1) && isLightColor(color2);
+    }
+
+    /**
+     * 检查链接URL是否符合常见的“隐藏资源”特征
+     * @param {string} url
+     * @returns {boolean}
+     */
+    function isLikelyHiddenResourceLink(url) {
         if (!url) return false;
-        
-        // 常见内部链接模式
-        const internalPatterns = [
-            /^#/, // 锚点
-            /^javascript:/, // JavaScript伪协议
-            /^mailto:/, // 邮件链接
-            /^tel:/, // 电话链接
-            /^data:/, // Data URL
-        ];
-        
-        // 检查是否为内部链接模式
-        for (const pattern of internalPatterns) {
-            if (pattern.test(url)) {
-                return false;
-            }
-        }
-        
-        try {
-            const urlObj = new URL(url, window.location.origin);
-            const hostname = urlObj.hostname.toLowerCase();
-            
-            // 判断是否为本站域名
-            for (const domain of SITE_DOMAINS) {
-                if (hostname === domain || 
-                    hostname.endsWith('.' + domain) ||
-                    hostname === 'www.' + domain) {
-                    return false; // 内部链接
-                }
-            }
-            
-            // 特殊处理相对路径
-            if (!urlObj.hostname && url.startsWith('/')) {
-                return false; // 相对路径，视为内部链接
-            }
-            
-            // 其他情况视为外部链接
-            return true;
-            
-        } catch (e) {
-            // URL解析失败，检查是否为相对路径
-            if (url.startsWith('/') || url.startsWith('./') || url.startsWith('../')) {
-                return false; // 相对路径
-            }
-            return true; // 无法判断，按外部链接处理
-        }
+        const lowerUrl = url.toLowerCase();
+        return CONFIG.DETECT_PATTERNS.some(pattern => lowerUrl.includes(pattern));
     }
-    
-    // 主处理函数
-    function processHiddenContent() {
-        const externalHiddenLinks = new Map(); // 只存储外部隐藏链接
-        const hiddenTexts = new Map(); // 存储白色文本
-        const processedElements = new WeakSet();
-        let linkIndex = 0;
-        
-        // 1. 处理隐藏链接（只收集外部链接）
-        document.querySelectorAll('a[href]').forEach((a) => {
-            if (processedElements.has(a)) return;
-            
-            const href = a.getAttribute('href')?.trim();
-            if (!href || href === '#') return;
-            
-            // 只处理外部链接
-            if (!isExternalLink(href)) return;
-            
-            // 判断是否为隐藏链接的条件
-            const hasVisibleText = a.textContent.trim().length > 0;
-            const hasImg = a.querySelector('img, .emot, .emoji, emoticon, smiley') !== null;
-            const computedStyle = getComputedStyle(a);
-            
-            // 检查是否隐藏
-            const isInvisible = 
-                computedStyle.display === 'none' ||
-                computedStyle.visibility === 'hidden' ||
-                computedStyle.opacity === '0' ||
-                computedStyle.color === 'rgb(255, 255, 255)' ||
-                computedStyle.color === 'rgb(247, 247, 247)' ||
-                computedStyle.color === 'rgb(250, 250, 250)' ||
-                computedStyle.color === '#ffffff' ||
-                computedStyle.color === '#fff' ||
-                computedStyle.color === '#f7f7f7';
-            
-            // 如果是隐藏的外部链接
-            if ((hasImg && !hasVisibleText) || isInvisible) {
-                const linkId = `external-hidden-link-${linkIndex++}`;
-                a.id = linkId;
-                
-                // 存储外部链接信息
-                externalHiddenLinks.set(linkId, {
-                    element: a,
-                    href: href,
-                    originalHtml: a.outerHTML,
-                    position: getElementPosition(a),
-                    isHidden: true
-                });
-                
-                processedElements.add(a);
-            } else {
-                // 普通外部链接也高亮显示（但不收录到汇总面板）
-                a.style.cssText = `
-                    color: #0066cc !important;
-                    background-color: #f0f8ff !important;
-                    border-left: 3px solid #0066cc !important;
-                    padding-left: 5px !important;
-                    margin: 1px 0 !important;
-                `;
+
+    /************************
+     * 主处理函数
+     ************************/
+    /**
+     * 扫描并高亮颜色隐藏的文本
+     * 处理逻辑：字体颜色与背景色相同或过于接近（均为浅色）
+     */
+    function highlightColorHiddenText(container = document.body) {
+        const elements = container.querySelectorAll('font, span, div, p, td');
+        let count = 0;
+
+        elements.forEach(el => {
+            // 跳过已处理或不应处理的元素
+            if (el.closest('pre, code, .hidden-text-highlighter')) return;
+            if (el.textContent.trim().length < 2) return; // 忽略过短文本
+
+            const style = window.getComputedStyle(el);
+            const textColor = style.color;
+            const bgColor = style.backgroundColor;
+
+            if (isColorSameOrSimilar(textColor, bgColor)) {
+                el.classList.add('hidden-text-highlighter');
+                count++;
             }
         });
-        
-        // 2. 处理白色隐藏文本
-        function processWhiteTextNodes(node) {
-            if (node.nodeType !== 3 || !node.textContent.trim()) return;
-            
-            const parent = node.parentElement;
-            if (!parent || processedElements.has(parent)) return;
-            
-            const computedStyle = getComputedStyle(parent);
-            const textColor = computedStyle.color;
-            
-            // 判断是否为白色或接近白色
-            const isWhiteOrTransparent = 
-                textColor === 'rgb(255, 255, 255)' ||
-                textColor === 'rgb(247, 247, 247)' ||
-                textColor === 'rgb(250, 250, 250)' ||
-                textColor === 'rgb(252, 252, 252)' ||
-                textColor === 'rgb(253, 253, 253)' ||
-                textColor === 'rgb(254, 254, 254)' ||
-                textColor === '#ffffff' ||
-                textColor === '#fff' ||
-                textColor === '#f7f7f7' ||
-                textColor === '#fafafa' ||
-                textColor === '#fcfcfc' ||
-                textColor === '#fefefe' ||
-                parseFloat(computedStyle.opacity) < 0.1 ||
-                computedStyle.visibility === 'hidden';
-            
-            if (isWhiteOrTransparent) {
-                const textId = `hidden-text-${hiddenTexts.size}`;
-                
-                // 创建包装元素
-                const wrapper = document.createElement('span');
-                wrapper.id = textId;
-                wrapper.className = 'revealed-white-text';
-                wrapper.style.cssText = `
-                    color: ${CONFIG.whiteTextRevealColor} !important;
-                    background-color: ${CONFIG.whiteTextBackgroundColor} !important;
-                    border: 1px solid ${CONFIG.whiteTextRevealColor} !important;
-                    padding: 2px 4px !important;
-                    border-radius: 3px !important;
-                    margin: 0 2px !important;
-                    font-weight: normal !important;
-                `;
-                wrapper.textContent = node.textContent;
-                
-                // 替换文本节点
-                parent.replaceChild(wrapper, node);
-                
-                // 存储文本信息
-                hiddenTexts.set(textId, {
-                    element: wrapper,
-                    content: node.textContent.trim(),
-                    position: getElementPosition(wrapper),
-                    originalColor: textColor
-                });
-                
-                processedElements.add(wrapper);
+        return count;
+    }
+
+    /**
+     * 扫描并高亮隐藏在图片中的链接
+     * 处理逻辑：链接内只有图片，且链接URL符合“隐藏资源”特征
+     */
+    function highlightImageHiddenLinks(container = document.body) {
+        const links = container.querySelectorAll('a[href]');
+        let count = 0;
+
+        links.forEach(link => {
+            // 跳过已处理或不应处理的元素
+            if (link.classList.contains('hidden-link-highlighter')) return;
+            if (!link.querySelector('img')) return; // 只处理包含图片的链接
+            // 确保链接内除了图片没有其他文本（即链接完全由图片构成）
+            const linkContent = link.innerHTML.trim();
+            if (!/^<img\s[^>]*>$/i.test(linkContent) && link.textContent.trim() !== '') return;
+
+            // 检查URL特征
+            if (isLikelyHiddenResourceLink(link.href)) {
+                link.classList.add('hidden-link-highlighter');
+                // 可选：为图片添加提示性title
+                const img = link.querySelector('img');
+                if (img && !img.title.includes(CONFIG.HIDDEN_IMG_TITLE)) {
+                    img.title = CONFIG.HIDDEN_IMG_TITLE + (img.title || '');
+                }
+                count++;
             }
-        }
-        
-        // 遍历文本节点
-        const walker = document.createTreeWalker(
-            document.body,
-            NodeFilter.SHOW_TEXT,
-            null,
-            false
-        );
-        
-        let node;
-        while (node = walker.nextNode()) {
-            processWhiteTextNodes(node);
-        }
-        
-        // 3. 高亮显示隐藏外部链接
-        externalHiddenLinks.forEach((linkInfo, linkId) => {
-            const a = linkInfo.element;
-            
-            // 高亮样式
-            a.style.cssText = `
-                color: ${CONFIG.linkHighlightColor} !important;
-                background-color: ${CONFIG.linkBackgroundColor} !important;
-                border: 2px dashed ${CONFIG.linkHighlightColor} !important;
-                padding: 3px 8px !important;
-                margin: 3px !important;
-                border-radius: 4px !important;
-                font-weight: bold !important;
-                text-decoration: none !important;
-                display: inline-block !important;
-                position: relative !important;
-            `;
-            
-            // 添加外部链接标记
-            const externalBadge = document.createElement('span');
-            externalBadge.style.cssText = `
-                display: inline-block;
-                margin-left: 5px;
-                padding: 1px 4px;
-                background: ${CONFIG.linkHighlightColor};
-                color: white;
-                font-size: 10px;
-                border-radius: 2px;
-                vertical-align: middle;
-            `;
-            externalBadge.textContent = '外链';
-            
-            // 在链接末尾添加标记
-            a.appendChild(externalBadge);
-            
-            // 添加鼠标悬停提示
-            a.title = `隐藏外部链接: ${linkInfo.href}\n点击在新标签页打开`;
-            a.target = '_blank';
-            
-            // 添加点击事件记录
-            a.addEventListener('click', function(e) {
-                console.log(`点击隐藏外链: ${linkInfo.href}`);
-            });
         });
-        
-        // 4. 创建下方汇总显示面板（只显示外部链接）
-        if (externalHiddenLinks.size > 0 || hiddenTexts.size > 0) {
-            createSummaryPanel(externalHiddenLinks, hiddenTexts);
-        }
-        
-        console.log(`处理完成: ${externalHiddenLinks.size}个外部隐藏链接, ${hiddenTexts.size}处隐藏文本`);
-        
-        // 显示统计信息
-        if (externalHiddenLinks.size > 0) {
-            showNotification(`发现 ${externalHiddenLinks.size} 个隐藏外链`);
-        }
+        return count;
     }
-    
-    // 创建汇总显示面板
-    function createSummaryPanel(hiddenLinks, hiddenTexts) {
-        const panelId = 'hidden-content-summary-panel';
-        
-        // 移除可能存在的旧面板
-        const oldPanel = document.getElementById(panelId);
-        if (oldPanel) oldPanel.remove();
-        
-        // 创建面板容器
-        const panel = document.createElement('div');
-        panel.id = panelId;
-        panel.style.cssText = `
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            width: 400px;
-            max-height: 500px;
-            background: ${CONFIG.summaryPanelBgColor};
-            border: 2px solid ${CONFIG.summaryPanelBorderColor};
-            border-radius: 8px;
-            padding: 15px;
-            z-index: 999999;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-            font-family: Arial, sans-serif;
-            overflow: hidden;
-            transition: all 0.3s ease;
-        `;
-        
-        // 创建标题栏
-        const header = document.createElement('div');
-        header.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #ddd;
-        `;
-        
-        const title = document.createElement('h3');
-        title.style.cssText = `
-            margin: 0;
-            color: #d35400;
-            font-size: 16px;
-        `;
-        title.innerHTML = `🔍 检测到隐藏内容 (${hiddenLinks.size}个外链, ${hiddenTexts.size}处文本)`;
-        
-        const closeBtn = document.createElement('button');
-        closeBtn.textContent = '×';
-        closeBtn.style.cssText = `
-            background: none;
-            border: none;
-            font-size: 20px;
-            cursor: pointer;
-            color: #999;
-            padding: 0 5px;
-        `;
-        closeBtn.onclick = () => panel.remove();
-        
-        header.appendChild(title);
-        header.appendChild(closeBtn);
-        
-        // 创建内容区域
-        const content = document.createElement('div');
-        content.style.cssText = `
-            max-height: 400px;
-            overflow-y: auto;
-            padding-right: 10px;
-        `;
-        
-        // 添加外部链接部分
-        if (hiddenLinks.size > 0) {
-            const linksSection = document.createElement('div');
-            linksSection.innerHTML = `
-                <div style="color: #c0392b; font-weight: bold; margin-bottom: 10px; font-size: 14px; display: flex; align-items: center; gap: 8px;">
-                    <span>🔗 隐藏外部链接 (${hiddenLinks.size}个)</span>
-                    <span style="background: #c0392b; color: white; padding: 2px 6px; border-radius: 10px; font-size: 12px;">外链</span>
-                </div>
-            `;
-            
-            // 按域名分组显示链接
-            const linksByDomain = new Map();
-            hiddenLinks.forEach((linkInfo, linkId) => {
-                try {
-                    const url = new URL(linkInfo.href);
-                    const domain = url.hostname;
-                    if (!linksByDomain.has(domain)) {
-                        linksByDomain.set(domain, []);
-                    }
-                    linksByDomain.get(domain).push({id: linkId, ...linkInfo});
-                } catch (e) {
-                    // 无效URL，放在其他分类
-                    if (!linksByDomain.has('其他')) {
-                        linksByDomain.set('其他', []);
-                    }
-                    linksByDomain.get('其他').push({id: linkId, ...linkInfo});
-                }
+
+    /************************
+     * 脚本控制与界面
+     ************************/
+    function main() {
+        console.log('[隐藏内容高亮器] 开始扫描页面...');
+        const textCount = highlightColorHiddenText();
+        const linkCount = highlightImageHiddenLinks();
+        const total = textCount + linkCount;
+
+        console.log(`[隐藏内容高亮器] 扫描完成。高亮了 ${textCount} 处隐藏文本和 ${linkCount} 个隐藏链接。`);
+
+        if (CONFIG.ENABLE_NOTIFICATION && total > 0) {
+            GM_notification({
+                text: `已高亮 ${total} 处隐藏内容`,
+                title: '隐藏内容高亮器',
+                timeout: 3000
             });
-            
-            // 按域名显示链接
-            linksByDomain.forEach((links, domain) => {
-                const domainHeader = document.createElement('div');
-                domainHeader.style.cssText = `
-                    font-size: 13px;
-                    color: #666;
-                    background: #f8f9fa;
-                    padding: 5px 10px;
-                    border-radius: 3px;
-                    margin: 10px 0 5px 0;
-                    border-left: 3px solid #3498db;
-                `;
-                domainHeader.textContent = `🏷️ ${domain}`;
-                linksSection.appendChild(domainHeader);
-                
-                links.forEach(linkInfo => {
-                    const linkItem = document.createElement('div');
-                    linkItem.style.cssText = `
-                        margin-bottom: 10px;
-                        padding: 10px;
-                        background: white;
-                        border-radius: 5px;
-                        border-left: 4px solid ${CONFIG.linkHighlightColor};
-                        position: relative;
-                    `;
-                    
-                    // 提取文件名或路径最后一部分
-                    let displayText = linkInfo.href;
-                    try {
-                        const url = new URL(linkInfo.href);
-                        const pathParts = url.pathname.split('/').filter(p => p);
-                        displayText = pathParts.length > 0 ? pathParts[pathParts.length - 1] : url.hostname;
-                        if (!displayText && url.pathname !== '/') {
-                            displayText = url.pathname;
-                        }
-                    } catch (e) {
-                        // 保持原链接
-                    }
-                    
-                    linkItem.innerHTML = `
-                        <div style="font-size: 12px; color: #666; margin-bottom: 5px; display: flex; align-items: center;">
-                            <span style="margin-right: 5px;">🔗</span>
-                            <span style="flex-grow: 1;">${truncateText(displayText, 30)}</span>
-                            <span style="background: #f0f0f0; padding: 1px 6px; border-radius: 3px; font-size: 11px;">${getLinkType(linkInfo.href)}</span>
-                        </div>
-                        <div style="word-break: break-all; font-size: 12px; color: #888; margin-bottom: 8px;">
-                            ${truncateUrl(linkInfo.href)}
-                        </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <button onclick="document.getElementById('${linkInfo.id}').scrollIntoView({behavior: 'smooth', block: 'center'})" 
-                                    style="padding: 3px 10px; background: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px; display: flex; align-items: center;">
-                                <span style="margin-right: 3px;">📍</span> 定位
-                            </button>
-                            <button onclick="window.open('${linkInfo.href}', '_blank')" 
-                                    style="padding: 3px 10px; background: #2ecc71; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px; display: flex; align-items: center;">
-                                <span style="margin-right: 3px;">↗️</span> 打开
-                            </button>
-                            <button onclick="navigator.clipboard.writeText('${linkInfo.href}'); this.textContent='✅ 已复制'; setTimeout(() => this.textContent='📋 复制', 1500)" 
-                                    style="padding: 3px 10px; background: #9b59b6; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px; display: flex; align-items: center;">
-                                <span style="margin-right: 3px;">📋</span> 复制
-                            </button>
-                        </div>
-                    `;
-                    
-                    linksSection.appendChild(linkItem);
-                });
-            });
-            
-            content.appendChild(linksSection);
-        }
-        
-        // 添加隐藏文本部分
-        if (hiddenTexts.size > 0) {
-            const textsSection = document.createElement('div');
-            textsSection.style.marginTop = '20px';
-            textsSection.innerHTML = `
-                <div style="color: #2980b9; font-weight: bold; margin-bottom: 10px; font-size: 14px;">
-                    📝 隐藏文本内容 (${hiddenTexts.size}处)
-                </div>
-            `;
-            
-            hiddenTexts.forEach((textInfo, textId) => {
-                const textItem = document.createElement('div');
-                textItem.style.cssText = `
-                    margin-bottom: 10px;
-                    padding: 10px;
-                    background: white;
-                    border-radius: 5px;
-                    border-left: 4px solid ${CONFIG.whiteTextRevealColor};
-                `;
-                
-                textItem.innerHTML = `
-                    <div style="color: ${CONFIG.whiteTextRevealColor}; font-weight: bold; margin-bottom: 8px; padding: 8px; background: #f8fdff; border-radius: 3px; font-size: 13px;">
-                        "${textInfo.content}"
-                    </div>
-                    <div style="display: flex; justify-content: space-between;">
-                        <button onclick="document.getElementById('${textId}').scrollIntoView({behavior: 'smooth', block: 'center'})" 
-                                style="padding: 3px 10px; background: #3498db; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">
-                            📍 定位到文本
-                        </button>
-                        <button onclick="navigator.clipboard.writeText('${textInfo.content.replace(/'/g, "\\'")}'); this.textContent='✅ 已复制'; setTimeout(() => this.textContent='📋 复制文本', 1500)" 
-                                style="padding: 3px 10px; background: #9b59b6; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">
-                            📋 复制文本
-                        </button>
-                    </div>
-                `;
-                
-                textsSection.appendChild(textItem);
-            });
-            
-            content.appendChild(textsSection);
-        }
-        
-        // 添加控制按钮
-        const controls = document.createElement('div');
-        controls.style.cssText = `
-            display: flex;
-            justify-content: space-between;
-            margin-top: 15px;
-            padding-top: 10px;
-            border-top: 1px solid #ddd;
-        `;
-        
-        const minimizeBtn = document.createElement('button');
-        minimizeBtn.textContent = '最小化';
-        minimizeBtn.style.cssText = `
-            padding: 5px 15px;
-            background: #f39c12;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-        `;
-        minimizeBtn.onclick = () => {
-            panel.style.width = '40px';
-            panel.style.height = '40px';
-            panel.style.overflow = 'hidden';
-            panel.innerHTML = `
-                <div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; cursor: pointer;"
-                     onclick="this.parentElement.style.width='400px'; this.parentElement.style.height='auto'; this.parentElement.innerHTML = document.getElementById('${panelId}-content').innerHTML;">
-                    <span style="color: #d35400; font-weight: bold; font-size: 18px;">🔍</span>
-                </div>
-            `;
-        };
-        
-        const clearBtn = document.createElement('button');
-        clearBtn.textContent = '清空高亮';
-        clearBtn.style.cssText = `
-            padding: 5px 15px;
-            background: #e74c3c;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-        `;
-        clearBtn.onclick = () => {
-            // 移除高亮样式
-            document.querySelectorAll('.revealed-white-text').forEach(el => {
-                el.style.cssText = '';
-                el.className = '';
-            });
-            
-            // 移除链接高亮
-            hiddenLinks.forEach(linkInfo => {
-                linkInfo.element.style.cssText = '';
-                const badge = linkInfo.element.querySelector('span[style*="background"]');
-                if (badge) badge.remove();
-            });
-            
-            panel.remove();
-        };
-        
-        controls.appendChild(minimizeBtn);
-        controls.appendChild(clearBtn);
-        
-        // 组装面板
-        panel.appendChild(header);
-        panel.appendChild(content);
-        panel.appendChild(controls);
-        
-        // 保存内容用于最小化后恢复
-        const contentClone = content.cloneNode(true);
-        contentClone.id = `${panelId}-content`;
-        panel.appendChild(contentClone);
-        
-        document.body.appendChild(panel);
-        
-        // 添加面板拖动功能
-        makeDraggable(panel, header);
-    }
-    
-    // 辅助函数
-    function getElementPosition(element) {
-        const rect = element.getBoundingClientRect();
-        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-        return `距顶部: ${Math.round(rect.top + scrollTop)}px`;
-    }
-    
-    function truncateUrl(url, maxLength = 60) {
-        if (url.length <= maxLength) return url;
-        return url.substring(0, maxLength) + '...';
-    }
-    
-    function truncateText(text, maxLength = 30) {
-        if (!text) return '';
-        if (text.length <= maxLength) return text;
-        return text.substring(0, maxLength) + '...';
-    }
-    
-    function getLinkType(url) {
-        if (!url) return '链接';
-        
-        const patterns = {
-            '网盘': /(baidu|aliyun|yun\.cn|pan\.xunlei|ctfile|123pan|pikpak)/i,
-            '视频': /(youtube|bilibili|youku|iqiyi|tudou|v\.qq)/i,
-            '图片': /(jpg|jpeg|png|gif|webp|bmp)/i,
-            '文档': /(pdf|doc|docx|xls|xlsx|ppt|pptx|txt)/i,
-            '压缩包': /(zip|rar|7z|tar|gz)/i
-        };
-        
-        for (const [type, pattern] of Object.entries(patterns)) {
-            if (pattern.test(url)) return type;
-        }
-        
-        return '链接';
-    }
-    
-    function makeDraggable(element, handle) {
-        let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-        
-        handle.onmousedown = dragMouseDown;
-        
-        function dragMouseDown(e) {
-            e.preventDefault();
-            pos3 = e.clientX;
-            pos4 = e.clientY;
-            document.onmouseup = closeDragElement;
-            document.onmousemove = elementDrag;
-        }
-        
-        function elementDrag(e) {
-            e.preventDefault();
-            pos1 = pos3 - e.clientX;
-            pos2 = pos4 - e.clientY;
-            pos3 = e.clientX;
-            pos4 = e.clientY;
-            element.style.top = (element.offsetTop - pos2) + "px";
-            element.style.left = (element.offsetLeft - pos1) + "px";
-        }
-        
-        function closeDragElement() {
-            document.onmouseup = null;
-            document.onmousemove = null;
         }
     }
-    
-    function showNotification(message) {
-        const notification = document.createElement('div');
-        notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #2ecc71;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 5px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            z-index: 1000000;
-            font-size: 14px;
-            animation: slideIn 0.3s ease;
-        `;
-        notification.textContent = message;
-        document.body.appendChild(notification);
-        
-        setTimeout(() => {
-            notification.style.animation = 'slideOut 0.3s ease';
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.parentNode.removeChild(notification);
-                }
-            }, 300);
-        }, 3000);
-        
-        // 添加动画样式
-        if (!document.querySelector('#notification-styles')) {
-            const style = document.createElement('style');
-            style.id = 'notification-styles';
-            style.textContent = `
-                @keyframes slideIn {
-                    from { transform: translateX(100%); opacity: 0; }
-                    to { transform: translateX(0); opacity: 1; }
-                }
-                @keyframes slideOut {
-                    from { transform: translateX(0); opacity: 1; }
-                    to { transform: translateX(100%); opacity: 0; }
-                }
-            `;
-            document.head.appendChild(style);
-        }
-    }
-    
-    // 初始化执行
+
+    // 注册一个菜单命令，便于手动重新扫描
+    GM_registerMenuCommand('🔍 重新扫描隐藏内容', main);
+
+    // 页面加载完成后执行
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            setTimeout(processHiddenContent, 1500);
-        });
+        document.addEventListener('DOMContentLoaded', main);
     } else {
-        setTimeout(processHiddenContent, 800);
+        main();
     }
-    
-    // 监听动态内容加载
-    if (typeof MutationObserver !== 'undefined') {
-        const observer = new MutationObserver(() => {
-            setTimeout(processHiddenContent, 500);
-        });
-        
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    }
+
+    // 监听动态内容加载（如Ajax、SPA）
+    const observer = new MutationObserver(() => {
+        // 防抖处理，避免频繁触发
+        clearTimeout(observer.debounceTimer);
+        observer.debounceTimer = setTimeout(main, 500);
+    });
+    observer.debounceTimer = null;
+    observer.observe(document.body, { childList: true, subtree: true });
 })();
