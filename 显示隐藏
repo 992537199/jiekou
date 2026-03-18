@@ -1,200 +1,97 @@
 // ==UserScript==
-// @name         帖子隐藏内容高亮器
-// @namespace    https://github.com/your-namespace/
-// @version      1.1
-// @description  自动检测并高亮显示帖子中被隐藏的文本和链接。专门处理颜色隐藏、同背景色隐藏以及隐藏在图片表情中的链接。
-// @author       基于“福利吧论坛 - 好孩子看得见”重构
+// @name         福利吧隐藏内容高亮显示（过滤内部链接）
+// @namespace    http://tampermonkey.net/
+// @version      1.2
+// @description  高亮显示帖子中隐藏在表情、图片、文字中的外部内容，跳过论坛内部链接
+// @author       豆包
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
-// @match        https://www.wnflb2023.com/thread*
-// @grant        GM_addStyle
-// @grant        GM_registerMenuCommand
-// @grant        GM_notification
-// @license      MIT
+// @match        https://www.wnflb2023.com/thread*forum.php?mod=viewthread*
+// @grant        none
 // ==/UserScript==
 
 (function() {
     'use strict';
+    const hideContentList = [];
+    // 论坛内部域名列表（需跳过的内部链接）
+    const internalDomains = ['wnflb2023.com', 'fuliba', 'fuliba2023.net', 'fuliba123.com', 'fuliba2024-1256179406.file.myqcloud.com'];
 
-    // 核心配置
-    const CONFIG = {
-        HIGHLIGHT_COLOR: '#FF1493', // 高亮文本颜色 (深粉红)
-        BG_COLOR: 'transparent',     // 高亮背景色
-        BORDER: '2px dashed #FF4500', // 高亮边框
-        MARKER_TEXT: ' 🔍',          // 在隐藏链接旁添加的标记
-        HIDDEN_IMG_TITLE: '[隐]',   // 为隐藏链接的图片添加的title前缀
-        ENABLE_NOTIFICATION: true,  // 处理完成后是否显示桌面通知
-        DETECT_PATTERNS: [
-            'xiaohuangniao.me',
-            'pan.baidu.com/s/',
-            'www.aliyundrive.com/s/',
-            'cloud.189.cn/web/share',
-            // 可在此处添加其他常见的隐藏链接模式
-        ]
+    // 判定是否为内部链接
+    const isInternalLink = (url) => {
+        return internalDomains.some(domain => url.includes(domain));
     };
 
-    // 添加核心样式
-    GM_addStyle(`
-        /* 高亮被隐藏的文本元素 */
-        .hidden-text-highlighter {
-            color: ${CONFIG.HIGHLIGHT_COLOR} !important;
-            background-color: ${CONFIG.BG_COLOR} !important;
-            font-weight: bold !important;
-            text-shadow: none !important;
-            border: ${CONFIG.BORDER} !important;
-            padding: 1px 3px !important;
-            border-radius: 3px !important;
+    // 1. 处理：表情/图片包裹的隐藏外部链接（如小黄鸟链接）
+    const imgLinks = document.querySelectorAll('a[href]:has(img[smilieid], img[alt=""])');
+    imgLinks.forEach(link => {
+        const href = link.href.trim();
+        const img = link.querySelector('img');
+        // 筛选外部有效链接（排除内部链接、空链接和锚点）
+        if (href && !href.includes('#') && img && !isInternalLink(href)) {
+            // 高亮显示链接（红色背景+白色文字）
+            link.style.backgroundColor = '#ff0000';
+            link.style.color = '#ffffff';
+            link.style.padding = '2px 5px';
+            link.style.borderRadius = '3px';
+            link.style.textDecoration = 'underline';
+            // 保留表情+添加链接文本
+            link.innerHTML = `${img.outerHTML} 【隐藏外部链接：${href}】`;
+            hideContentList.push({type: '外部链接', content: href});
         }
-        /* 高亮被隐藏的链接（图片形式） */
-        a.hidden-link-highlighter {
-            position: relative;
-            outline: 3px solid #FFD700 !important; /* 金色边框 */
-            display: inline-block;
-        }
-        a.hidden-link-highlighter::after {
-            content: "${CONFIG.MARKER_TEXT}";
-            color: red;
-            font-weight: bold;
-            font-size: 0.8em;
-            margin-left: 4px;
-            vertical-align: super;
-        }
-    `);
-
-    /************************
-     * 核心工具函数
-     ************************/
-    /**
-     * 判断颜色是否为“浅色”（接近白色，肉眼难辨）
-     * @param {string} colorStr - CSS颜色字符串，如 'rgb(255, 255, 255)'
-     * @returns {boolean}
-     */
-    function isLightColor(colorStr) {
-        if (!colorStr || colorStr === 'transparent') return false;
-        const match = colorStr.match(/\d+/g);
-        if (!match || match.length < 3) return false;
-        const [r, g, b] = match.map(Number);
-        // 计算亮度 (灰度值) 公式: 0.299*R + 0.587*G + 0.114*B
-        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-        return luminance > 200; // 阈值可调 (0-255, 越高越“白”)
-    }
-
-    /**
-     * 判断两个颜色是否“相同或过于接近”
-     * @param {string} color1
-     * @param {string} color2
-     * @returns {boolean}
-     */
-    function isColorSameOrSimilar(color1, color2) {
-        if (color1 === color2) return true;
-        // 简化的相似度判断：如果都是浅色，也视为“隐藏”
-        return isLightColor(color1) && isLightColor(color2);
-    }
-
-    /**
-     * 检查链接URL是否符合常见的“隐藏资源”特征
-     * @param {string} url
-     * @returns {boolean}
-     */
-    function isLikelyHiddenResourceLink(url) {
-        if (!url) return false;
-        const lowerUrl = url.toLowerCase();
-        return CONFIG.DETECT_PATTERNS.some(pattern => lowerUrl.includes(pattern));
-    }
-
-    /************************
-     * 主处理函数
-     ************************/
-    /**
-     * 扫描并高亮颜色隐藏的文本
-     * 处理逻辑：字体颜色与背景色相同或过于接近（均为浅色）
-     */
-    function highlightColorHiddenText(container = document.body) {
-        const elements = container.querySelectorAll('font, span, div, p, td');
-        let count = 0;
-
-        elements.forEach(el => {
-            // 跳过已处理或不应处理的元素
-            if (el.closest('pre, code, .hidden-text-highlighter')) return;
-            if (el.textContent.trim().length < 2) return; // 忽略过短文本
-
-            const style = window.getComputedStyle(el);
-            const textColor = style.color;
-            const bgColor = style.backgroundColor;
-
-            if (isColorSameOrSimilar(textColor, bgColor)) {
-                el.classList.add('hidden-text-highlighter');
-                count++;
-            }
-        });
-        return count;
-    }
-
-    /**
-     * 扫描并高亮隐藏在图片中的链接
-     * 处理逻辑：链接内只有图片，且链接URL符合“隐藏资源”特征
-     */
-    function highlightImageHiddenLinks(container = document.body) {
-        const links = container.querySelectorAll('a[href]');
-        let count = 0;
-
-        links.forEach(link => {
-            // 跳过已处理或不应处理的元素
-            if (link.classList.contains('hidden-link-highlighter')) return;
-            if (!link.querySelector('img')) return; // 只处理包含图片的链接
-            // 确保链接内除了图片没有其他文本（即链接完全由图片构成）
-            const linkContent = link.innerHTML.trim();
-            if (!/^<img\s[^>]*>$/i.test(linkContent) && link.textContent.trim() !== '') return;
-
-            // 检查URL特征
-            if (isLikelyHiddenResourceLink(link.href)) {
-                link.classList.add('hidden-link-highlighter');
-                // 可选：为图片添加提示性title
-                const img = link.querySelector('img');
-                if (img && !img.title.includes(CONFIG.HIDDEN_IMG_TITLE)) {
-                    img.title = CONFIG.HIDDEN_IMG_TITLE + (img.title || '');
-                }
-                count++;
-            }
-        });
-        return count;
-    }
-
-    /************************
-     * 脚本控制与界面
-     ************************/
-    function main() {
-        console.log('[隐藏内容高亮器] 开始扫描页面...');
-        const textCount = highlightColorHiddenText();
-        const linkCount = highlightImageHiddenLinks();
-        const total = textCount + linkCount;
-
-        console.log(`[隐藏内容高亮器] 扫描完成。高亮了 ${textCount} 处隐藏文本和 ${linkCount} 个隐藏链接。`);
-
-        if (CONFIG.ENABLE_NOTIFICATION && total > 0) {
-            GM_notification({
-                text: `已高亮 ${total} 处隐藏内容`,
-                title: '隐藏内容高亮器',
-                timeout: 3000
-            });
-        }
-    }
-
-    // 注册一个菜单命令，便于手动重新扫描
-    GM_registerMenuCommand('🔍 重新扫描隐藏内容', main);
-
-    // 页面加载完成后执行
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', main);
-    } else {
-        main();
-    }
-
-    // 监听动态内容加载（如Ajax、SPA）
-    const observer = new MutationObserver(() => {
-        // 防抖处理，避免频繁触发
-        clearTimeout(observer.debounceTimer);
-        observer.debounceTimer = setTimeout(main, 500);
     });
-    observer.debounceTimer = null;
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    // 2. 处理：白色文字（与背景融合的隐藏文本）
+    const allElements = document.querySelectorAll('.t_f, .pcb, .plhin td');
+    allElements.forEach(el => {
+        const computedColor = getComputedStyle(el).color;
+        const text = el.textContent.trim();
+        // 识别白色文字（rgb或十六进制）
+        const isWhite = computedColor === 'rgb(255, 255, 255)' || computedColor.toLowerCase() === '#ffffff';
+        if (isWhite && text && text.length > 1) {
+            // 改为蓝色高亮（符合要求）
+            el.style.color = '#0000ff !important';
+            el.style.backgroundColor = '#f5f5f5';
+            el.style.padding = '1px 3px';
+            hideContentList.push({type: '隐藏文本', content: text});
+        }
+    });
+
+    // 3. 处理：无文本仅含元素的隐藏外部链接容器
+    const emptyLinkContainers = document.querySelectorAll('a[href]:not(:has(text)):has(img, span)');
+    emptyLinkContainers.forEach(container => {
+        const href = container.href.trim();
+        if (href && !isInternalLink(href) && !hideContentList.some(item => item.content === href)) {
+            container.style.outline = '2px solid #ff0000';
+            container.title = `隐藏外部链接：${href}`;
+            // 悬浮显示完整内容
+            container.addEventListener('mouseover', () => {
+                container.setAttribute('data-tooltip', `隐藏内容：${href}`);
+            });
+            hideContentList.push({type: '容器隐藏外部链接', content: href});
+        }
+    });
+
+    // 4. 在帖子底部显示所有隐藏内容汇总
+    const postContainer = document.querySelector('#postlist');
+    if (postContainer && hideContentList.length > 0) {
+        const summaryDiv = document.createElement('div');
+        summaryDiv.style.margin = '20px 0';
+        summaryDiv.style.padding = '15px';
+        summaryDiv.style.border = '2px solid #ff0000';
+        summaryDiv.style.backgroundColor = '#fff8f8';
+        summaryDiv.style.borderRadius = '5px';
+
+        let summaryHTML = '<h4 style="color:#ff0000; margin:0 0 10px 0;">🔍 检测到隐藏内容汇总（仅外部）：</h4>';
+        hideContentList.forEach((item, index) => {
+            summaryHTML += `<p style="margin:5px 0;">${index+1}. [${item.type}]：`;
+            // 链接转为可点击超链接
+            if (item.type.includes('链接')) {
+                summaryHTML += `<a href="${item.content}" target="_blank" style="color:#0066cc; text-decoration:underline;">${item.content}</a></p>`;
+            } else {
+                summaryHTML += `<span style="color:#333;">${item.content}</span></p>`;
+            }
+        });
+
+        summaryDiv.innerHTML = summaryHTML;
+        postContainer.after(summaryDiv);
+    }
 })();
