@@ -1,0 +1,72 @@
+// ==UserScript==
+// @name         福利吧 隐藏链接&白色文字高亮
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  显示隐藏在表情/图片里的链接、白色隐藏文字，标红+蓝色高亮
+// @author       豆包
+// @match        *://www.wnflb2023.com/*
+// @match        *://fuliba*/*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+    const hideLinks = [];
+
+    // 1. 处理：链接里只有图片、没有文字 → 隐藏链接
+    const aTags = document.querySelectorAll('a[href]');
+    aTags.forEach(a => {
+        const href = a.href.trim();
+        if (!href || href === '#') return;
+
+        // 链接内部只有图片，没有文本
+        const text = a.textContent.trim();
+        const hasImg = a.querySelector('img') !== null;
+
+        if (hasImg && text === '') {
+            // 标红显示链接
+            a.style.color = '#ff0000';
+            a.style.fontWeight = 'bold';
+            a.innerText = ' 【隐藏链接：' + href + '】';
+            hideLinks.push(href);
+        }
+    });
+
+    // 2. 处理：文字颜色是白色 → 改成蓝色
+    const allTextNodes = document.querySelectorAll('*:not(script):not(style):not(noscript):not(title)');
+    allTextNodes.forEach(el => {
+        const color = getComputedStyle(el).color;
+        const text = el.textContent.trim();
+        if (!text) return;
+
+        // rgb 白色判断
+        if (color === 'rgb(255, 255, 255)' || color === '#ffffff') {
+            el.style.color = '#0000ff' !important;
+            el.style.backgroundColor = '#f0f0f0';
+        }
+    });
+
+    // 3. 在帖子底部统一展示所有隐藏链接
+    const postContent = document.querySelector('.t_f');
+    if (postContent && hideLinks.length > 0) {
+        const div = document.createElement('div');
+        div.style.marginTop = '15px';
+        div.style.padding = '10px';
+        div.style.border = '1px dashed red';
+        div.style.color = '#ff0000';
+        div.style.fontSize = '14px';
+
+        let html = '<strong>🔍 本帖检测到隐藏链接：</strong><br>';
+        hideLinks.forEach(link => {
+            // 判断是不是网址
+            if (link.startsWith('http')) {
+                html += `<a href="${link}" target="_blank" style="color:blue;">${link}</a><br>`;
+            } else {
+                html += link + '<br>';
+            }
+        });
+
+        div.innerHTML = html;
+        postContent.parentNode.appendChild(div);
+    }
+})();
