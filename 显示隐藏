@@ -1,11 +1,11 @@
 // ==UserScript==
-// @name         福利吧隐藏内容高亮显示（过滤内部链接）
+// @name         福利吧隐藏内容高亮显示（聚焦A标签优化）
 // @namespace    http://tampermonkey.net/
-// @version      1.2
-// @description  高亮显示帖子中隐藏在表情、图片、文字中的外部内容，跳过论坛内部链接
+// @version      1.3
+// @description  专门识别<a>标签内隐藏在表情、图片中的外部内容，高亮显示并过滤内部链接
 // @author       豆包
-// @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
-// @match        https://www.wnflb2023.com/thread*forum.php?mod=viewthread*
+// @match        *://www.wnflb2023.com/thread-*
+// @match        *://www.wnflb2023.com/forum.php?mod=viewthread*
 // @grant        none
 // ==/UserScript==
 
@@ -20,57 +20,59 @@
         return internalDomains.some(domain => url.includes(domain));
     };
 
-    // 1. 处理：表情/图片包裹的隐藏外部链接（如小黄鸟链接）
-    const imgLinks = document.querySelectorAll('a[href]:has(img[smilieid], img[alt=""])');
-    imgLinks.forEach(link => {
+    // 核心：遍历所有<a>标签，捕获隐藏内容
+    const allLinks = document.querySelectorAll('a[href]');
+    allLinks.forEach(link => {
         const href = link.href.trim();
-        const img = link.querySelector('img');
-        // 筛选外部有效链接（排除内部链接、空链接和锚点）
-        if (href && !href.includes('#') && img && !isInternalLink(href)) {
-            // 高亮显示链接（红色背景+白色文字）
+        const linkText = link.textContent.trim();
+        const hasImg = link.querySelector('img') !== null; // 含表情/图片
+        const hasOnlyElement = hasImg && linkText === ''; // 仅含元素无文本（隐藏核心场景）
+        const isExternal = href && !isInternalLink(href) && !href.includes('#'); // 有效外部链接
+
+        // 场景1：<a>标签内仅含表情/图片，无文本（如小黄鸟、夸克链接隐藏在表情中）
+        if (isExternal && hasOnlyElement) {
+            // 高亮样式：红色背景+白色文字，突出显示
             link.style.backgroundColor = '#ff0000';
             link.style.color = '#ffffff';
-            link.style.padding = '2px 5px';
-            link.style.borderRadius = '3px';
+            link.style.padding = '3px 6px';
+            link.style.borderRadius = '4px';
             link.style.textDecoration = 'underline';
-            // 保留表情+添加链接文本
-            link.innerHTML = `${img.outerHTML} 【隐藏外部链接：${href}】`;
-            hideContentList.push({type: '外部链接', content: href});
+            link.style.display = 'inline-block'; // 确保样式生效
+            // 保留原图片/表情，追加链接文本
+            link.innerHTML = `${link.innerHTML} 【隐藏外部链接】`;
+            // 悬浮显示完整链接
+            link.title = `点击访问：${href}`;
+            hideContentList.push({type: 'A标签图片隐藏链接', content: href});
+        }
+
+        // 场景2：<a>标签文本为白色（与背景融合，隐藏文本/链接）
+        if (isExternal && linkText) {
+            const computedColor = getComputedStyle(link).color;
+            const isWhiteText = computedColor === 'rgb(255, 255, 255)' || computedColor.toLowerCase() === '#ffffff';
+            if (isWhiteText) {
+                link.style.color = '#0000ff !important'; // 转为蓝色高亮
+                link.style.backgroundColor = '#f0f0f0';
+                link.style.padding = '2px 4px';
+                hideContentList.push({type: 'A标签白色隐藏链接', content: href, text: linkText});
+            }
         }
     });
 
-    // 2. 处理：白色文字（与背景融合的隐藏文本）
-    const allElements = document.querySelectorAll('.t_f, .pcb, .plhin td');
-    allElements.forEach(el => {
+    // 补充：处理非<a>标签内的白色隐藏文本（如普通文本段落）
+    const allTextElements = document.querySelectorAll('.t_f, .pcb, .plhin td');
+    allTextElements.forEach(el => {
         const computedColor = getComputedStyle(el).color;
         const text = el.textContent.trim();
-        // 识别白色文字（rgb或十六进制）
         const isWhite = computedColor === 'rgb(255, 255, 255)' || computedColor.toLowerCase() === '#ffffff';
-        if (isWhite && text && text.length > 1) {
-            // 改为蓝色高亮（符合要求）
+        if (isWhite && text && text.length > 1 && !el.querySelector('a[href]')) {
             el.style.color = '#0000ff !important';
             el.style.backgroundColor = '#f5f5f5';
             el.style.padding = '1px 3px';
-            hideContentList.push({type: '隐藏文本', content: text});
+            hideContentList.push({type: '普通隐藏文本', content: text});
         }
     });
 
-    // 3. 处理：无文本仅含元素的隐藏外部链接容器
-    const emptyLinkContainers = document.querySelectorAll('a[href]:not(:has(text)):has(img, span)');
-    emptyLinkContainers.forEach(container => {
-        const href = container.href.trim();
-        if (href && !isInternalLink(href) && !hideContentList.some(item => item.content === href)) {
-            container.style.outline = '2px solid #ff0000';
-            container.title = `隐藏外部链接：${href}`;
-            // 悬浮显示完整内容
-            container.addEventListener('mouseover', () => {
-                container.setAttribute('data-tooltip', `隐藏内容：${href}`);
-            });
-            hideContentList.push({type: '容器隐藏外部链接', content: href});
-        }
-    });
-
-    // 4. 在帖子底部显示所有隐藏内容汇总
+    // 底部汇总面板：集中展示所有隐藏内容
     const postContainer = document.querySelector('#postlist');
     if (postContainer && hideContentList.length > 0) {
         const summaryDiv = document.createElement('div');
@@ -80,15 +82,17 @@
         summaryDiv.style.backgroundColor = '#fff8f8';
         summaryDiv.style.borderRadius = '5px';
 
-        let summaryHTML = '<h4 style="color:#ff0000; margin:0 0 10px 0;">🔍 检测到隐藏内容汇总（仅外部）：</h4>';
+        let summaryHTML = '<h4 style="color:#ff0000; margin:0 0 10px 0;">🔍 A标签隐藏内容汇总（仅外部）：</h4>';
         hideContentList.forEach((item, index) => {
-            summaryHTML += `<p style="margin:5px 0;">${index+1}. [${item.type}]：`;
+            summaryHTML += `<p style="margin:5px 0; line-height:1.5;">${index+1}. [${item.type}]：`;
             // 链接转为可点击超链接
-            if (item.type.includes('链接')) {
-                summaryHTML += `<a href="${item.content}" target="_blank" style="color:#0066cc; text-decoration:underline;">${item.content}</a></p>`;
+            if (item.content.startsWith('http')) {
+                summaryHTML += `<a href="${item.content}" target="_blank" style="color:#0066cc; text-decoration:underline; margin-right:8px;">${item.content}</a>`;
+                if (item.text) summaryHTML += `<span style="color:#666;">（原隐藏文本：${item.text}）</span>`;
             } else {
-                summaryHTML += `<span style="color:#333;">${item.content}</span></p>`;
+                summaryHTML += `<span style="color:#333;">${item.content}</span>`;
             }
+            summaryHTML += '</p>';
         });
 
         summaryDiv.innerHTML = summaryHTML;
