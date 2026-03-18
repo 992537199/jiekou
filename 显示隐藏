@@ -4,8 +4,8 @@
 // @version      2.0
 // @description  显示隐藏在表情/图片里的链接、白色隐藏文字，标红+蓝色高亮
 // @author       优化版
-// @match        *://www.wnflb2023.com/*
-// @match        *://fuliba*/*
+// @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
+// @match        https://www.wnflb2023.com/thread*
 // @grant        none
 // ==/UserScript==
 
