@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name          福利吧 暗黑/白天模式切换
+// @name         wnflb2023 暗黑模式(优化固定左下角)
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  左下角开关，暗黑/白天模式，本地记忆
+// @version      2.0
+// @description  始终固定屏幕左下角，缩放不漂移，暗黑/白天切换
 // @author       豆包
 // @match        https://www.wnflb2023.com/*
 // @grant        none
@@ -11,50 +11,51 @@
 (function() {
     'use strict';
 
-    // 样式
     const style = document.createElement('style');
     style.textContent = `
-        /* 夜间模式全局样式 */
+        /* 暗黑模式样式 */
         .dark-mode {
             background-color: #1a1a1a !important;
             color: #e0e0e0 !important;
         }
-        .dark-mode *:not(iframe, img, video, svg) {
+        .dark-mode *:not(iframe, img, video, svg, [class*=img], [id*=img]) {
             background-color: inherit !important;
             color: inherit !important;
             border-color: #444 !important;
         }
-        /* 开关按钮 */
+
+        /* 关键：固定在视口左下角，不随网页缩放、滚动跑位 */
         #dark-mode-toggle {
             position: fixed;
-            left: 15px;
-            bottom: 30px;
-            width: 50px;
-            height: 50px;
+            left: 2vw;
+            bottom: 2vh;
+            width: clamp(40px, 5vw, 55px);
+            height: clamp(40px, 5vw, 55px);
             border-radius: 50%;
             background: #2d2d2d;
             color: #fff;
             border: none;
-            font-size: 20px;
+            font-size: clamp(16px, 2.5vw, 22px);
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.4);
             z-index: 999999;
-            transition: all 0.3s;
+            transition: all 0.2s ease;
         }
+
         #dark-mode-toggle:hover {
-            transform: scale(1.1);
+            transform: scale(1.05);
         }
+
         .dark-mode #dark-mode-toggle {
-            background: #f5f5f5;
+            background: #f0f0f0;
             color: #222;
         }
     `;
     document.head.appendChild(style);
 
-    // 开关按钮
     const toggleBtn = document.createElement('button');
     toggleBtn.id = 'dark-mode-toggle';
     toggleBtn.innerHTML = '🌙';
@@ -63,7 +64,6 @@
     // 读取本地记忆
     const isDark = localStorage.getItem('darkMode') === 'true';
 
-    // 设置初始模式
     function setMode(dark) {
         if (dark) {
             document.documentElement.classList.add('dark-mode');
@@ -77,7 +77,6 @@
 
     setMode(isDark);
 
-    // 点击切换
     toggleBtn.addEventListener('click', () => {
         const now = localStorage.getItem('darkMode') === 'true';
         setMode(!now);
