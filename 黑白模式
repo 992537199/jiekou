@@ -1,0 +1,94 @@
+// ==UserScript==
+// @name         福利吧论坛 黑白模式切换
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  为福利吧论坛添加黑白/彩色模式切换功能，开关位于左下角
+// @author       豆包
+// @match        *://www.wnflb2023.com/*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 1. 添加黑白模式样式
+    const style = document.createElement('style');
+    style.id = 'darkLightModeStyle';
+    style.textContent = `
+        /* 黑白模式全局滤镜 */
+        .dark-mode {
+            filter: grayscale(100%);
+            -webkit-filter: grayscale(100%);
+            filter-origin: center;
+            transition: filter 0.3s ease;
+        }
+        /* 切换开关样式 */
+        #modeToggleBtn {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background-color: #333;
+            color: #fff;
+            border: none;
+            font-size: 14px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        #modeToggleBtn:hover {
+            transform: scale(1.1);
+            background-color: #555;
+        }
+        #modeToggleBtn.light-mode {
+            background-color: #fff;
+            color: #333;
+            border: 2px solid #333;
+        }
+    `;
+    document.head.appendChild(style);
+
+    // 2. 创建切换开关按钮
+    const toggleBtn = document.createElement('button');
+    toggleBtn.id = 'modeToggleBtn';
+    toggleBtn.className = 'light-mode'; // 默认彩色模式
+    toggleBtn.textContent = '黑白';
+    toggleBtn.title = '点击切换黑白/彩色模式';
+    document.body.appendChild(toggleBtn);
+
+    // 3. 模式切换逻辑
+    let isDarkMode = false;
+    const htmlElement = document.documentElement;
+
+    // 读取本地存储，保持上次模式状态
+    const savedMode = localStorage.getItem('wnflbDarkMode');
+    if (savedMode === 'true') {
+        isDarkMode = true;
+        htmlElement.classList.add('dark-mode');
+        toggleBtn.textContent = '彩色';
+        toggleBtn.classList.remove('light-mode');
+    }
+
+    // 点击切换事件
+    toggleBtn.addEventListener('click', () => {
+        isDarkMode = !isDarkMode;
+        if (isDarkMode) {
+            htmlElement.classList.add('dark-mode');
+            toggleBtn.textContent = '彩色';
+            toggleBtn.classList.remove('light-mode');
+            localStorage.setItem('wnflbDarkMode', 'true');
+        } else {
+            htmlElement.classList.remove('dark-mode');
+            toggleBtn.textContent = '黑白';
+            toggleBtn.classList.add('light-mode');
+            localStorage.setItem('wnflbDarkMode', 'false');
+        }
+    });
+})();
