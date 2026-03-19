@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name          福利吧 暗黑/白天模式切换
+// @name         福利吧 暗黑/白天模式切换
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  左下角开关，暗黑/白天模式，本地记忆，自适应缩放
+// @version      1.2
+// @description  左下角开关，暗黑/白天模式，本地记忆，自适应缩放，iOS适配
 // @author       豆包
 // @match        https://www.wnflb2023.com/*
 // @grant        none
@@ -10,6 +10,12 @@
 
 (function() {
     'use strict';
+
+    // 检测iOS设备
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    
+    // 检测移动端
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
     // 样式
     const style = document.createElement('style');
@@ -24,14 +30,9 @@
             color: inherit !important;
             border-color: #444 !important;
         }
-        /* 开关按钮 */
+        /* 开关按钮 - 基础样式 */
         #dark-mode-toggle {
             position: fixed;
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            background: #2d2d2d;
-            color: #fff;
             border: none;
             font-size: 20px;
             cursor: pointer;
@@ -42,19 +43,70 @@
             z-index: 999999;
             transition: all 0.3s;
         }
-        #dark-mode-toggle:hover {
+        /* 桌面端样式 */
+        #dark-mode-toggle:not(.mobile) {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: #2d2d2d;
+            color: #fff;
+        }
+        /* 移动端样式 */
+        #dark-mode-toggle.mobile {
+            width: 60px;
+            height: 60px;
+            border-radius: 30px;
+            background: rgba(45, 45, 45, 0.9);
+            color: #fff;
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            font-size: 24px;
+        }
+        /* iOS特定样式 */
+        #dark-mode-toggle.ios {
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            user-select: none;
+        }
+        #dark-mode-toggle:hover, #dark-mode-toggle:active {
             transform: scale(1.1);
         }
-        .dark-mode #dark-mode-toggle {
+        /* 夜间模式按钮样式 */
+        .dark-mode #dark-mode-toggle:not(.mobile) {
             background: #f5f5f5;
             color: #222;
+        }
+        .dark-mode #dark-mode-toggle.mobile {
+            background: rgba(245, 245, 245, 0.9);
+            color: #222;
+        }
+        /* 防止iOS点击高亮 */
+        .dark-mode-toggle-touch {
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* 防止iOS缩放时字体变化 */
+        @supports (-webkit-touch-callout: none) {
+            #dark-mode-toggle {
+                -webkit-text-size-adjust: 100%;
+            }
         }
     `;
     document.head.appendChild(style);
 
-    // 开关按钮
+    // 创建按钮
     const toggleBtn = document.createElement('button');
     toggleBtn.id = 'dark-mode-toggle';
+    toggleBtn.setAttribute('aria-label', '切换暗黑/白天模式');
+    
+    // 添加移动端和iOS类
+    if (isMobile) {
+        toggleBtn.classList.add('mobile');
+    }
+    if (isIOS) {
+        toggleBtn.classList.add('ios');
+        toggleBtn.classList.add('dark-mode-toggle-touch');
+    }
+    
     toggleBtn.innerHTML = '🌙';
     document.body.appendChild(toggleBtn);
 
@@ -77,55 +129,142 @@
     function updateButtonPosition() {
         const viewportWidth = window.innerWidth;
         const viewportHeight = window.innerHeight;
-        const buttonSize = 50;
-        const padding = 15;
+        const buttonSize = isMobile ? 60 : 50;
+        const padding = isMobile ? 20 : 15;
         
-        // 计算按钮位置，确保始终在可视区域内
-        let left = padding;
-        let bottom = padding;
+        // iOS安全区域处理
+        const safeAreaInsetLeft = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sat') || '0px') || 0;
+        const safeAreaInsetBottom = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sab') || '0px') || 0;
         
-        // 如果网页有缩放，根据视口大小动态调整
+        // 计算安全边距
+        const safeLeft = Math.max(padding, safeAreaInsetLeft + padding);
+        const safeBottom = Math.max(padding, safeAreaInsetBottom + padding);
+        
+        // 计算按钮位置
+        let left = safeLeft;
+        let bottom = safeBottom;
+        
+        // 处理缩放
         const scaleX = viewportWidth / document.documentElement.scrollWidth;
         const scaleY = viewportHeight / document.documentElement.scrollHeight;
-        
-        // 使用较小的缩放值作为参考
         const scale = Math.min(scaleX, scaleY, 1);
         
-        // 如果缩放小于1，调整边距
         if (scale < 1) {
-            left = padding * scale;
-            bottom = padding * scale;
+            left = safeLeft * scale;
+            bottom = safeBottom * scale;
         }
         
-        // 确保按钮不会超出视口
-        left = Math.max(padding, Math.min(left, viewportWidth - buttonSize - padding));
-        bottom = Math.max(padding, Math.min(bottom, viewportHeight - buttonSize - padding));
+        // iOS虚拟Home条避让
+        if (isIOS) {
+            const isLandscape = viewportWidth > viewportHeight;
+            const homeIndicatorHeight = 34; // iOS虚拟Home条高度
+            
+            if (!isLandscape && bottom < homeIndicatorHeight + padding) {
+                bottom = homeIndicatorHeight + padding;
+            }
+        }
+        
+        // 边界保护
+        left = Math.max(safeLeft, Math.min(left, viewportWidth - buttonSize - safeLeft));
+        bottom = Math.max(safeBottom, Math.min(bottom, viewportHeight - buttonSize - safeBottom));
         
         toggleBtn.style.left = `${left}px`;
         toggleBtn.style.bottom = `${bottom}px`;
     }
 
+    // 防止iOS双击缩放
+    let lastTouchEnd = 0;
+    function preventDoubleTapZoom(e) {
+        const now = Date.now();
+        if (now - lastTouchEnd <= 300) {
+            e.preventDefault();
+        }
+        lastTouchEnd = now;
+    }
+
+    // 触摸事件处理
+    function setupTouchEvents() {
+        if (!isMobile) return;
+        
+        toggleBtn.addEventListener('touchstart', function(e) {
+            this.style.opacity = '0.8';
+            e.preventDefault(); // 防止触摸滚动
+        }, { passive: false });
+        
+        toggleBtn.addEventListener('touchend', function(e) {
+            this.style.opacity = '1';
+            e.preventDefault();
+        }, { passive: false });
+        
+        toggleBtn.addEventListener('touchmove', function(e) {
+            e.preventDefault(); // 防止触摸时拖动
+        }, { passive: false });
+        
+        // 防止双击缩放
+        toggleBtn.addEventListener('touchend', preventDoubleTapZoom);
+    }
+
+    // 点击/触摸事件
+    function handleToggle() {
+        const now = localStorage.getItem('darkMode') === 'true';
+        setMode(!now);
+        
+        // iOS触觉反馈
+        if (isIOS && window.navigator.vibrate) {
+            window.navigator.vibrate(20);
+        }
+    }
+
     // 初始化
     setMode(isDark);
     updateButtonPosition();
+    setupTouchEvents();
 
     // 事件监听
-    toggleBtn.addEventListener('click', () => {
-        const now = localStorage.getItem('darkMode') === 'true';
-        setMode(!now);
-    });
+    if (isMobile) {
+        toggleBtn.addEventListener('touchend', handleToggle);
+    } else {
+        toggleBtn.addEventListener('click', handleToggle);
+    }
 
     // 监听窗口变化
-    window.addEventListener('resize', updateButtonPosition);
-    window.addEventListener('scroll', updateButtonPosition);
+    const resizeObserver = new ResizeObserver(updateButtonPosition);
+    resizeObserver.observe(document.body);
     
-    // 监听DOM变化（针对SPA应用）
+    window.addEventListener('resize', updateButtonPosition);
+    window.addEventListener('orientationchange', function() {
+        // 屏幕旋转后延迟更新，等待布局稳定
+        setTimeout(updateButtonPosition, 100);
+    });
+
+    // 监听滚动
+    let scrollTimeout;
+    window.addEventListener('scroll', function() {
+        clearTimeout(scrollTimeout);
+        scrollTimeout = setTimeout(updateButtonPosition, 50);
+    });
+
+    // DOM变化监听
     const observer = new MutationObserver(() => {
         updateButtonPosition();
     });
     observer.observe(document.body, { 
         childList: true, 
-        subtree: true 
+        subtree: true,
+        attributes: true
     });
+
+    // iOS键盘弹出处理
+    if (isIOS) {
+        let originalHeight = window.innerHeight;
+        window.addEventListener('resize', function() {
+            const newHeight = window.innerHeight;
+            if (Math.abs(newHeight - originalHeight) > 100) {
+                // 键盘弹出/收起
+                setTimeout(updateButtonPosition, 300);
+            }
+            originalHeight = newHeight;
+        });
+    }
 
 })();
