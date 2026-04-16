@@ -1,0 +1,65 @@
+// ==UserScript==
+// @name         通用UTF-8/GBK乱码自动修复
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  自动修复网页中因编码错误导致的中文乱码（闀块潚、鐭墽这类通用乱码）
+// @author       helper
+// @match        *://*/*
+// @grant        none
+// @run-at       document-start
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 通用编码修复：尝试把乱码字符串重新编码
+    function fixEncoding(s) {
+        try {
+            // 先尝试 UTF-8 被当成 GBK 显示的经典乱码修复
+            const bytes = new TextEncoder('gbk').encode(s);
+            const fixed = new TextDecoder('utf-8').decode(bytes);
+            if (/[\u4e00-\u9fa5]/.test(fixed)) return fixed;
+        } catch(e) {}
+
+        try {
+            // 反向：GBK 被当成 UTF-8
+            const bytes = new TextEncoder('utf-8').encode(s);
+            const fixed = new TextDecoder('gbk').decode(bytes);
+            if (/[\u4e00-\u9fa5]/.test(fixed)) return fixed;
+        } catch(e) {}
+
+        return s;
+    }
+
+    // 递归修复文本节点
+    function fixNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            const before = node.textContent;
+            const after = fixEncoding(before);
+            if (before !== after) {
+                node.textContent = after;
+            }
+        } else if (node.nodeType === Node.ELEMENT_NODE &&
+            !['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'PRE'].includes(node.tagName)) {
+            node.childNodes.forEach(fixNode);
+        }
+    }
+
+    // 初始修复
+    document.addEventListener('DOMContentLoaded', () => {
+        fixNode(document.body);
+    });
+
+    // 监听动态内容
+    const observer = new MutationObserver(mutations => {
+        for (const mut of mutations) {
+            mut.addedNodes.forEach(fixNode);
+        }
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true
+    });
+})();
