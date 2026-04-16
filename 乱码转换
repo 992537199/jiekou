@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         通用UTF-8/GBK乱码自动修复
+// @name         通用UTF-8/GBK乱码自动修复（增强版）
 // @namespace    http://tampermonkey.net/
 // @version      2.0
-// @description  自动修复网页中因编码错误导致的中文乱码
+// @description  自动修复网页、JSON、文本文件等各类内容的中文乱码，支持Gitee、GitHub、普通网站
 // @author       helper
 // @match        *://*/*
 // @grant        none
@@ -12,237 +12,284 @@
 (function() {
     'use strict';
 
-    // 创建编码转换器
-    const gbkEncoder = (function() {
-        // 简单的GBK编码表（常用汉字范围）
-        const gbkMap = {};
-        for (let i = 0x81; i <= 0xFE; i++) {
-            for (let j = 0x40; j <= 0xFE; j++) {
-                if (j !== 0x7F) {
-                    const gbkBytes = [i, j];
-                    try {
-                        const utf8 = new TextDecoder('gbk').decode(new Uint8Array(gbkBytes));
-                        gbkMap[utf8] = gbkBytes;
-                    } catch(e) {}
-                }
-            }
-        }
-        return {
-            encode: function(str) {
-                const bytes = [];
-                for (let i = 0; i < str.length; i++) {
-                    const char = str[i];
-                    if (gbkMap[char]) {
-                        bytes.push(...gbkMap[char]);
-                    } else {
-                        // 非GBK字符用?代替
-                        bytes.push(0x3F);
-                    }
-                }
-                return new Uint8Array(bytes);
-            }
-        };
-    })();
+    console.log('通用乱码修复脚本已加载');
 
-    // 改进的乱码检测函数
-    function detectAndFixMojibake(text) {
-        if (!text || text.length < 2) return text;
+    // 核心修复函数：处理UTF-8被误读为GBK的常见乱码
+    function fixUtf8AsGbk(str) {
+        if (!str || typeof str !== 'string') return str;
         
-        // 检测是否是UTF-8被误读为GBK的典型乱码
-        const utf8AsGbkPattern = /[\u00C0-\u00DF][\u0080-\u00BF]|[\u00E0-\u00EF][\u0080-\u00BF]{2}/;
-        if (utf8AsGbkPattern.test(text)) {
-            try {
-                // 先将字符串编码为UTF-8
-                const utf8Bytes = new TextEncoder().encode(text);
-                // 尝试用GBK解码
-                const gbkDecoder = new TextDecoder('gbk');
-                const fixed = gbkDecoder.decode(utf8Bytes);
-                if (hasChinese(fixed)) return fixed;
-            } catch(e) {}
+        // 检测是否是典型的UTF-8被误读为GBK的乱码
+        const hasCommonMojibake = /闀|鐭|鍏|鍛|瀹|鏁/.test(str);
+        if (!hasCommonMojibake && !/(?:[\u0080-\u00FF]{2,})/.test(str)) {
+            return str; // 没有检测到常见乱码模式
+        }
+
+        try {
+            // 将当前字符串当作UTF-8编码
+            const encoder = new TextEncoder();
+            const utf8Bytes = encoder.encode(str);
+            
+            // 尝试用GBK解码
+            const decoder = new TextDecoder('gbk');
+            const result = decoder.decode(utf8Bytes);
+            
+            // 检查修复后是否包含中文
+            const hasChinese = /[\u4e00-\u9fa5]/.test(result);
+            const improved = (result.match(/[\u4e00-\u9fa5]/g) || []).length > (str.match(/[\u4e00-\u9fa5]/g) || []).length;
+            
+            if (hasChinese && improved) {
+                console.log('检测到乱码并修复：', str.substring(0, 50), '->', result.substring(0, 50));
+                return result;
+            }
+        } catch(e) {
+            console.warn('修复失败:', e);
         }
         
-        // 检测是否是GBK被误读为UTF-8的典型乱码
-        const gbkAsUtf8Pattern = /[\uFFFD\u00A0-\u00FF\u0100-\u017F\u0180-\u024F]/;
-        if (gbkAsUtf8Pattern.test(text)) {
-            try {
-                // 尝试先用GBK编码
-                const gbkBytes = gbkEncoder.encode(text);
-                // 再用UTF-8解码
-                const utf8Decoder = new TextDecoder('utf-8');
-                const fixed = utf8Decoder.decode(gbkBytes);
-                if (hasChinese(fixed)) return fixed;
-            } catch(e) {}
-            
-            // 尝试常见的乱码对
+        return str;
+    }
+
+    // 处理可能的GBK被误读为UTF-8的情况
+    function fixGbkAsUtf8(str) {
+        if (!str || typeof str !== 'string') return str;
+        
+        // 检测GBK被误读为UTF-8的特征
+        if (!/[\uFFFD\u00A0-\u00FF]{2,}/.test(str)) {
+            return str;
+        }
+
+        try {
+            // 常见乱码对照表
             const commonFixes = {
-                '闀': '长', '鐭': '短', '剧': '剧',
-                '锛': '、', '鍏': '公', '锻': '锻',
-                '瀹': '家', '鏁': '数', '鏁': '学'
+                '闀': '长', '鐭': '短', '鍏': '公', '鍛': '锻',
+                '瀹': '家', '鏁': '数', '瀹炰緥': '实例',
+                '闀块潚': '长青', '鐭墽': '短剧',
+                '鏀寔': '支持', '瀹夊叏': '安全'
             };
             
-            let result = text;
+            let result = str;
             for (const [wrong, right] of Object.entries(commonFixes)) {
                 result = result.replace(new RegExp(wrong, 'g'), right);
             }
-            if (result !== text && hasChinese(result)) return result;
+            
+            if (result !== str && /[\u4e00-\u9fa5]/.test(result)) {
+                return result;
+            }
+        } catch(e) {
+            console.warn('GBK修复失败:', e);
         }
         
-        return text;
+        return str;
     }
 
-    function hasChinese(str) {
-        return /[\u4e00-\u9fa5]/.test(str);
+    // 综合修复函数
+    function fixEncoding(str) {
+        if (!str || typeof str !== 'string') return str;
+        
+        // 先尝试UTF-8被误读为GBK
+        let fixed = fixUtf8AsGbk(str);
+        if (fixed !== str) return fixed;
+        
+        // 再尝试GBK被误读为UTF-8
+        fixed = fixGbkAsUtf8(str);
+        if (fixed !== str) return fixed;
+        
+        return str;
     }
 
-    // 修复文本内容
-    function fixTextContent(text) {
-        if (!text || text.length < 2 || !/[^\x00-\x7F]/.test(text)) {
-            return text;
+    // 修复文本节点
+    function fixTextNode(textNode) {
+        if (textNode.nodeType !== Node.TEXT_NODE) return;
+        
+        const before = textNode.textContent;
+        const after = fixEncoding(before);
+        
+        if (before !== after) {
+            textNode.textContent = after;
         }
-        
-        const before = text;
-        let after = before;
-        
-        // 尝试通用修复
-        after = detectAndFixMojibake(after);
-        
-        // 如果修复后中文变多，使用修复结果
-        const chineseBefore = (before.match(/[\u4e00-\u9fa5]/g) || []).length;
-        const chineseAfter = (after.match(/[\u4e00-\u9fa5]/g) || []).length;
-        
-        if (chineseAfter > chineseBefore || (chineseAfter > 0 && chineseBefore === 0)) {
-            return after;
-        }
-        
-        return before;
     }
 
-    // 修复节点
-    function fixNode(node) {
-        if (node.nodeType === Node.TEXT_NODE) {
-            const parent = node.parentNode;
-            if (parent && ['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'PRE', 'CODE'].includes(parent.tagName)) {
+    // 修复元素属性
+    function fixElementAttributes(element) {
+        const attributes = ['title', 'alt', 'placeholder', 'value'];
+        attributes.forEach(attr => {
+            if (element.hasAttribute(attr)) {
+                const before = element.getAttribute(attr);
+                const after = fixEncoding(before);
+                if (before !== after) {
+                    element.setAttribute(attr, after);
+                }
+            }
+        });
+    }
+
+    // 递归修复DOM树
+    function fixDomTree(root) {
+        if (!root) return;
+        
+        // 修复当前节点
+        if (root.nodeType === Node.TEXT_NODE) {
+            fixTextNode(root);
+        } else if (root.nodeType === Node.ELEMENT_NODE) {
+            // 跳过不需要修复的元素
+            const tagName = root.tagName.toUpperCase();
+            if (['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA'].includes(tagName)) {
                 return;
             }
             
-            const before = node.textContent;
-            const after = fixTextContent(before);
-            if (before !== after) {
-                node.textContent = after;
-            }
-        } else if (node.nodeType === Node.ELEMENT_NODE) {
-            // 检查特殊属性
-            ['placeholder', 'title', 'alt'].forEach(attr => {
-                if (node.hasAttribute(attr)) {
-                    const before = node.getAttribute(attr);
-                    const after = fixTextContent(before);
-                    if (before !== after) {
-                        node.setAttribute(attr, after);
-                    }
-                }
-            });
+            // 修复属性
+            fixElementAttributes(root);
             
-            // 递归子节点
-            node.childNodes.forEach(fixNode);
+            // 递归修复子节点
+            root.childNodes.forEach(fixDomTree);
         }
     }
 
-    // 主修复函数
-    function fixPageEncoding() {
-        // 先修复meta charset
-        const metaCharset = document.querySelector('meta[charset], meta[http-equiv="Content-Type"]');
-        if (metaCharset) {
-            const content = metaCharset.getAttribute('content') || '';
-            if (content.toLowerCase().includes('gbk') || content.toLowerCase().includes('gb2312')) {
-                metaCharset.setAttribute('charset', 'utf-8');
-            }
-        }
+    // 初始修复整个文档
+    function fixDocument() {
+        console.log('开始修复文档编码...');
         
-        // 修复整个文档
-        fixNode(document.documentElement);
-        
-        // 修复页面标题
+        // 修复文档标题
         const originalTitle = document.title;
-        const fixedTitle = fixTextContent(originalTitle);
+        const fixedTitle = fixEncoding(originalTitle);
         if (originalTitle !== fixedTitle) {
             document.title = fixedTitle;
         }
+        
+        // 修复整个文档树
+        fixDomTree(document.documentElement);
+        
+        // 尝试修复页面中的JSON内容
+        if (document.body && document.body.textContent) {
+            const bodyText = document.body.textContent.trim();
+            if (bodyText.startsWith('{') || bodyText.startsWith('[')) {
+                try {
+                    const parsed = JSON.parse(bodyText);
+                    const fixed = fixEncoding(JSON.stringify(parsed));
+                    if (fixed !== bodyText) {
+                        // 如果是JSON文件，美化显示
+                        document.body.innerHTML = `<pre>${JSON.stringify(JSON.parse(fixed), null, 2)}</pre>`;
+                    }
+                } catch(e) {
+                    // 不是有效JSON，继续普通修复
+                }
+            }
+        }
+        
+        console.log('文档修复完成');
     }
 
-    // 拦截响应，尽早处理
-    if (typeof Response !== 'undefined') {
-        const originalFetch = window.fetch;
-        window.fetch = function(...args) {
-            return originalFetch.apply(this, args).then(response => {
-                if (!response.headers.get('content-type')?.includes('charset=utf-8')) {
-                    return response.clone().text().then(text => {
-                        const fixed = fixTextContent(text);
-                        if (fixed !== text) {
-                            const blob = new Blob([fixed], { type: 'text/html; charset=utf-8' });
-                            return new Response(blob, response);
+    // 拦截XMLHttpRequest请求
+    const originalXHROpen = XMLHttpRequest.prototype.open;
+    const originalXHRSend = XMLHttpRequest.prototype.send;
+    
+    XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
+        this._requestURL = url;
+        return originalXHROpen.call(this, method, url, async !== false, user, password);
+    };
+    
+    XMLHttpRequest.prototype.send = function(body) {
+        const xhr = this;
+        const originalOnReadyStateChange = xhr.onreadystatechange;
+        
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === 4 && xhr.status === 200) {
+                const contentType = xhr.getResponseHeader('Content-Type') || '';
+                const isText = contentType.includes('text/') || 
+                              contentType.includes('application/json') ||
+                              contentType.includes('application/javascript') ||
+                              /\.(json|js|txt|xml)$/i.test(xhr._requestURL || '');
+                
+                if (isText && xhr.responseText) {
+                    const before = xhr.responseText;
+                    const after = fixEncoding(before);
+                    
+                    if (before !== after) {
+                        console.log('修复XHR响应:', xhr._requestURL?.substring(0, 100));
+                        Object.defineProperty(xhr, 'responseText', {
+                            value: after,
+                            writable: false,
+                            configurable: true
+                        });
+                        
+                        if (xhr.response) {
+                            Object.defineProperty(xhr, 'response', {
+                                value: after,
+                                writable: false,
+                                configurable: true
+                            });
                         }
-                        return response;
-                    });
+                    }
                 }
+            }
+            
+            if (originalOnReadyStateChange) {
+                originalOnReadyStateChange.call(xhr);
+            }
+        };
+        
+        return originalXHRSend.call(this, body);
+    };
+
+    // 拦截fetch请求
+    if (typeof fetch === 'function') {
+        const originalFetch = window.fetch;
+        
+        window.fetch = function(input, init) {
+            return originalFetch.call(this, input, init).then(async response => {
+                if (!response.ok) return response;
+                
+                const contentType = response.headers.get('Content-Type') || '';
+                const isText = contentType.includes('text/') || 
+                              contentType.includes('application/json') ||
+                              contentType.includes('application/javascript') ||
+                              (typeof input === 'string' && /\.(json|js|txt|xml)$/i.test(input));
+                
+                if (isText) {
+                    const clone = response.clone();
+                    const text = await clone.text();
+                    const fixed = fixEncoding(text);
+                    
+                    if (text !== fixed) {
+                        console.log('修复fetch响应:', (typeof input === 'string' ? input : input.url)?.substring(0, 100));
+                        return new Response(fixed, {
+                            status: response.status,
+                            statusText: response.statusText,
+                            headers: response.headers
+                        });
+                    }
+                }
+                
                 return response;
             });
         };
     }
 
-    // 初始修复
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', fixPageEncoding, false);
-    } else {
-        setTimeout(fixPageEncoding, 0);
-    }
-
-    // 监听动态内容
+    // 监听DOM变化
     const observer = new MutationObserver(mutations => {
-        mutations.forEach(mutation => {
-            mutation.addedNodes.forEach(node => {
-                fixNode(node);
-            });
-        });
-    });
-
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-
-    // 处理AJAX响应
-    const originalXHROpen = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(...args) {
-        this.addEventListener('readystatechange', function() {
-            if (this.readyState === 4 && this.responseType === '' && this.responseText) {
-                const fixed = fixTextContent(this.responseText);
-                if (fixed !== this.responseText) {
-                    Object.defineProperty(this, 'responseText', {
-                        value: fixed,
-                        writable: true
-                    });
-                }
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                fixDomTree(node);
             }
-        });
-        return originalXHROpen.apply(this, args);
-    };
-
-    // 修复动态设置的内容
-    const originalInnerHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML').set;
-    Object.defineProperty(Element.prototype, 'innerHTML', {
-        set: function(value) {
-            const fixed = fixTextContent(value);
-            return originalInnerHTML.call(this, fixed);
         }
     });
 
-    const originalOuterHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML').set;
-    if (originalOuterHTML) {
-        Object.defineProperty(Element.prototype, 'outerHTML', {
-            set: function(value) {
-                const fixed = fixTextContent(value);
-                return originalOuterHTML.call(this, fixed);
-            }
+    // 启动脚本
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(fixDocument, 100); // 延迟确保所有内容已加载
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        });
+    } else {
+        setTimeout(fixDocument, 100);
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
         });
     }
+
+    // 添加调试信息
+    console.log('通用乱码修复脚本已激活，支持所有网站');
 })();
