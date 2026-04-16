@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         通用UTF-8/GBK乱码自动修复
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  自动修复网页中因编码错误导致的中文乱码（闀块潚、鐭墽这类通用乱码）
+// @version      2.0
+// @description  自动修复网页中因编码错误导致的中文乱码
 // @author       helper
 // @match        *://*/*
 // @grant        none
@@ -12,54 +12,237 @@
 (function() {
     'use strict';
 
-    // 通用编码修复：尝试把乱码字符串重新编码
-    function fixEncoding(s) {
-        try {
-            // 先尝试 UTF-8 被当成 GBK 显示的经典乱码修复
-            const bytes = new TextEncoder('gbk').encode(s);
-            const fixed = new TextDecoder('utf-8').decode(bytes);
-            if (/[\u4e00-\u9fa5]/.test(fixed)) return fixed;
-        } catch(e) {}
+    // 创建编码转换器
+    const gbkEncoder = (function() {
+        // 简单的GBK编码表（常用汉字范围）
+        const gbkMap = {};
+        for (let i = 0x81; i <= 0xFE; i++) {
+            for (let j = 0x40; j <= 0xFE; j++) {
+                if (j !== 0x7F) {
+                    const gbkBytes = [i, j];
+                    try {
+                        const utf8 = new TextDecoder('gbk').decode(new Uint8Array(gbkBytes));
+                        gbkMap[utf8] = gbkBytes;
+                    } catch(e) {}
+                }
+            }
+        }
+        return {
+            encode: function(str) {
+                const bytes = [];
+                for (let i = 0; i < str.length; i++) {
+                    const char = str[i];
+                    if (gbkMap[char]) {
+                        bytes.push(...gbkMap[char]);
+                    } else {
+                        // 非GBK字符用?代替
+                        bytes.push(0x3F);
+                    }
+                }
+                return new Uint8Array(bytes);
+            }
+        };
+    })();
 
-        try {
-            // 反向：GBK 被当成 UTF-8
-            const bytes = new TextEncoder('utf-8').encode(s);
-            const fixed = new TextDecoder('gbk').decode(bytes);
-            if (/[\u4e00-\u9fa5]/.test(fixed)) return fixed;
-        } catch(e) {}
-
-        return s;
+    // 改进的乱码检测函数
+    function detectAndFixMojibake(text) {
+        if (!text || text.length < 2) return text;
+        
+        // 检测是否是UTF-8被误读为GBK的典型乱码
+        const utf8AsGbkPattern = /[\u00C0-\u00DF][\u0080-\u00BF]|[\u00E0-\u00EF][\u0080-\u00BF]{2}/;
+        if (utf8AsGbkPattern.test(text)) {
+            try {
+                // 先将字符串编码为UTF-8
+                const utf8Bytes = new TextEncoder().encode(text);
+                // 尝试用GBK解码
+                const gbkDecoder = new TextDecoder('gbk');
+                const fixed = gbkDecoder.decode(utf8Bytes);
+                if (hasChinese(fixed)) return fixed;
+            } catch(e) {}
+        }
+        
+        // 检测是否是GBK被误读为UTF-8的典型乱码
+        const gbkAsUtf8Pattern = /[\uFFFD\u00A0-\u00FF\u0100-\u017F\u0180-\u024F]/;
+        if (gbkAsUtf8Pattern.test(text)) {
+            try {
+                // 尝试先用GBK编码
+                const gbkBytes = gbkEncoder.encode(text);
+                // 再用UTF-8解码
+                const utf8Decoder = new TextDecoder('utf-8');
+                const fixed = utf8Decoder.decode(gbkBytes);
+                if (hasChinese(fixed)) return fixed;
+            } catch(e) {}
+            
+            // 尝试常见的乱码对
+            const commonFixes = {
+                '闀': '长', '鐭': '短', '剧': '剧',
+                '锛': '、', '鍏': '公', '锻': '锻',
+                '瀹': '家', '鏁': '数', '鏁': '学'
+            };
+            
+            let result = text;
+            for (const [wrong, right] of Object.entries(commonFixes)) {
+                result = result.replace(new RegExp(wrong, 'g'), right);
+            }
+            if (result !== text && hasChinese(result)) return result;
+        }
+        
+        return text;
     }
 
-    // 递归修复文本节点
+    function hasChinese(str) {
+        return /[\u4e00-\u9fa5]/.test(str);
+    }
+
+    // 修复文本内容
+    function fixTextContent(text) {
+        if (!text || text.length < 2 || !/[^\x00-\x7F]/.test(text)) {
+            return text;
+        }
+        
+        const before = text;
+        let after = before;
+        
+        // 尝试通用修复
+        after = detectAndFixMojibake(after);
+        
+        // 如果修复后中文变多，使用修复结果
+        const chineseBefore = (before.match(/[\u4e00-\u9fa5]/g) || []).length;
+        const chineseAfter = (after.match(/[\u4e00-\u9fa5]/g) || []).length;
+        
+        if (chineseAfter > chineseBefore || (chineseAfter > 0 && chineseBefore === 0)) {
+            return after;
+        }
+        
+        return before;
+    }
+
+    // 修复节点
     function fixNode(node) {
         if (node.nodeType === Node.TEXT_NODE) {
+            const parent = node.parentNode;
+            if (parent && ['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'PRE', 'CODE'].includes(parent.tagName)) {
+                return;
+            }
+            
             const before = node.textContent;
-            const after = fixEncoding(before);
+            const after = fixTextContent(before);
             if (before !== after) {
                 node.textContent = after;
             }
-        } else if (node.nodeType === Node.ELEMENT_NODE &&
-            !['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'PRE'].includes(node.tagName)) {
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+            // 检查特殊属性
+            ['placeholder', 'title', 'alt'].forEach(attr => {
+                if (node.hasAttribute(attr)) {
+                    const before = node.getAttribute(attr);
+                    const after = fixTextContent(before);
+                    if (before !== after) {
+                        node.setAttribute(attr, after);
+                    }
+                }
+            });
+            
+            // 递归子节点
             node.childNodes.forEach(fixNode);
         }
     }
 
+    // 主修复函数
+    function fixPageEncoding() {
+        // 先修复meta charset
+        const metaCharset = document.querySelector('meta[charset], meta[http-equiv="Content-Type"]');
+        if (metaCharset) {
+            const content = metaCharset.getAttribute('content') || '';
+            if (content.toLowerCase().includes('gbk') || content.toLowerCase().includes('gb2312')) {
+                metaCharset.setAttribute('charset', 'utf-8');
+            }
+        }
+        
+        // 修复整个文档
+        fixNode(document.documentElement);
+        
+        // 修复页面标题
+        const originalTitle = document.title;
+        const fixedTitle = fixTextContent(originalTitle);
+        if (originalTitle !== fixedTitle) {
+            document.title = fixedTitle;
+        }
+    }
+
+    // 拦截响应，尽早处理
+    if (typeof Response !== 'undefined') {
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            return originalFetch.apply(this, args).then(response => {
+                if (!response.headers.get('content-type')?.includes('charset=utf-8')) {
+                    return response.clone().text().then(text => {
+                        const fixed = fixTextContent(text);
+                        if (fixed !== text) {
+                            const blob = new Blob([fixed], { type: 'text/html; charset=utf-8' });
+                            return new Response(blob, response);
+                        }
+                        return response;
+                    });
+                }
+                return response;
+            });
+        };
+    }
+
     // 初始修复
-    document.addEventListener('DOMContentLoaded', () => {
-        fixNode(document.body);
-    });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', fixPageEncoding, false);
+    } else {
+        setTimeout(fixPageEncoding, 0);
+    }
 
     // 监听动态内容
     const observer = new MutationObserver(mutations => {
-        for (const mut of mutations) {
-            mut.addedNodes.forEach(fixNode);
-        }
+        mutations.forEach(mutation => {
+            mutation.addedNodes.forEach(node => {
+                fixNode(node);
+            });
+        });
     });
 
     observer.observe(document.body, {
         childList: true,
-        subtree: true,
-        characterData: true
+        subtree: true
     });
+
+    // 处理AJAX响应
+    const originalXHROpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(...args) {
+        this.addEventListener('readystatechange', function() {
+            if (this.readyState === 4 && this.responseType === '' && this.responseText) {
+                const fixed = fixTextContent(this.responseText);
+                if (fixed !== this.responseText) {
+                    Object.defineProperty(this, 'responseText', {
+                        value: fixed,
+                        writable: true
+                    });
+                }
+            }
+        });
+        return originalXHROpen.apply(this, args);
+    };
+
+    // 修复动态设置的内容
+    const originalInnerHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML').set;
+    Object.defineProperty(Element.prototype, 'innerHTML', {
+        set: function(value) {
+            const fixed = fixTextContent(value);
+            return originalInnerHTML.call(this, fixed);
+        }
+    });
+
+    const originalOuterHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'outerHTML').set;
+    if (originalOuterHTML) {
+        Object.defineProperty(Element.prototype, 'outerHTML', {
+            set: function(value) {
+                const fixed = fixTextContent(value);
+                return originalOuterHTML.call(this, fixed);
+            }
+        });
+    }
 })();
