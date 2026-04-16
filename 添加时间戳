@@ -1,0 +1,64 @@
+// ==UserScript==
+// @name         GitHub/Gitee Raw 链接自动加时间戳强制刷新
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  自动给 raw.githubusercontent.com / gitee raw 链接加时间戳，强制不缓存，实时同步最新文件
+// @author       helper
+// @match        *://*/*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 匹配的域名
+    const rawDomains = [
+        'raw.githubusercontent.com',
+        'gitee.com',
+        'raw.giteeusercontent.com'
+    ];
+
+    // 生成时间戳
+    const timestamp = Date.now();
+
+    // 处理单个链接
+    function processLink(a) {
+        if (!a.href) return;
+
+        try {
+            const url = new URL(a.href);
+            // 判断是否是 Raw 域名
+            if (rawDomains.some(d => url.hostname.endsWith(d))) {
+                // 已有参数则不重复添加
+                if (!url.searchParams.has('t')) {
+                    url.searchParams.set('t', timestamp);
+                    a.href = url.href;
+                }
+            }
+        } catch (e) {}
+    }
+
+    // 处理页面所有 a 标签
+    document.querySelectorAll('a').forEach(processLink);
+
+    // 监听动态新增的链接
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach(mut => {
+            mut.addedNodes.forEach(node => {
+                if (node.tagName === 'A') {
+                    processLink(node);
+                } else if (node.querySelectorAll) {
+                    node.querySelectorAll('a').forEach(processLink);
+                }
+            });
+        });
+    });
+
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+    console.log('✅ Raw 链接已自动追加时间戳刷新参数');
+})();
