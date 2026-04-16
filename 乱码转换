@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         通用UTF-8/GBK乱码自动修复（增强版）
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      3.0
 // @description  自动修复网页、JSON、文本文件等各类内容的中文乱码，支持Gitee、GitHub、普通网站
 // @author       helper
 // @match        *://*/*
