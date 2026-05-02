@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         百家姓智能解密增强版
 // @namespace    http://tampermonkey.net/
-// @version      0.4.2
+// @version      0.5.0
 // @description  智能识别连续加密文本，≥10字符才解密，链接自动转超链接，40位字符识别为磁力链接
 // @author       豆包
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
+// @match        https://fuliba2023.net/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
@@ -14,11 +15,6 @@
 
 (function() {
     'use strict';
-
-    // 加密字符表
-    const cipher = '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻福水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳唐罗薛伍余米贝姚孟顾尹江钟竺干';
-    // 对应明文字符
-    const plain = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-_+=/?#%&*:：';
 
     // 配置项
     const defaultConfig = {
@@ -54,13 +50,35 @@
         console.log('使用默认配置');
     }
 
+    // 使用提供的精确映射表
+    const nameMap = {
+        // 0-9 (10个)
+        "赵":"0","钱":"1","孙":"2","李":"3","周":"4","吴":"5","郑":"6","王":"7","冯":"8","陈":"9",
+        // a-z (26个)
+        "褚":"a","卫":"b","蒋":"c","沈":"d","韩":"e","杨":"f","朱":"g","秦":"h","尤":"i","许":"j",
+        "何":"k","吕":"l","施":"m","张":"n","孔":"o","曹":"p","严":"q","华":"r","金":"s","魏":"t",
+        "陶":"u","姜":"v","戚":"w","谢":"x","邹":"y","喻":"z",
+        // A-Z (26个)
+        "福":"A","水":"B","窦":"C","章":"D","云":"E","苏":"F","潘":"G","葛":"H","奚":"I","范":"J",
+        "彭":"K","郎":"L","鲁":"M","韦":"N","昌":"O","马":"P","苗":"Q","凤":"R","花":"S","方":"T",
+        "俞":"U","任":"V","袁":"W","柳":"X","唐":"Y","罗":"Z",
+        // URL 特殊符号
+        "薛":":","姚":"/","孟":"?","江":"&","钟":"=","顾":".","尹":"-","余":"_","贝":"%","赖":" ",
+        // ed2k 专用符号
+        "卜":"|"
+    };
+
+    // 从映射表生成加密字符表
+    const cipher = Object.keys(nameMap).join('');
+    
     // 建立映射
     const cipherSet = new Set(cipher);
-    const cipherMap = {};
+    const cipherMap = { ...nameMap };
     const reverseMap = {};
-    for (let i = 0; i < cipher.length; i++) {
-        cipherMap[cipher[i]] = plain[i];
-        reverseMap[plain[i]] = cipher[i];
+    
+    // 建立反向映射
+    for (let [cipherChar, plainChar] of Object.entries(nameMap)) {
+        reverseMap[plainChar] = cipherChar;
     }
 
     // 判断文本是否需要解密
@@ -410,10 +428,16 @@
 
         // 标题
         const title = document.createElement('h3');
-        title.textContent = '百家姓解密设置';
+        title.textContent = '百家姓解密设置 v0.5.0';
         title.style.margin = '0 0 15px 0';
         title.style.color = '#0066cc';
         menu.appendChild(title);
+
+        // 映射表信息
+        const mapInfo = document.createElement('div');
+        mapInfo.style.cssText = 'margin-bottom:15px;padding:8px;background:#f8f9fa;border-radius:4px;font-size:12px;color:#666;';
+        mapInfo.innerHTML = '📊 当前映射表: 支持72个百家姓字符<br>🔢 数字(10) 小写字母(26) 大写字母(26) 特殊符号(10)';
+        menu.appendChild(mapInfo);
 
         // 自动解密开关
         const autoToggle = createToggle('自动解密', 'autoDecrypt', config.autoDecrypt, (value) => {
@@ -519,13 +543,15 @@
         testLabel.style.fontWeight = 'bold';
         const testInput = document.createElement('input');
         testInput.type = 'text';
-        testInput.placeholder = '输入密文测试...';
+        testInput.placeholder = '输入百家姓密文测试...';
         testInput.style.width = '100%';
         testInput.style.padding = '5px';
         testInput.style.boxSizing = 'border-box';
         const testResult = document.createElement('div');
         testResult.style.marginTop = '5px';
         testResult.style.color = '#666';
+        testResult.style.fontSize = '12px';
+        testResult.style.wordBreak = 'break-all';
         testInput.oninput = () => {
             const result = decodeStr(testInput.value);
             const cipherCount = [...testInput.value].filter(ch => cipherSet.has(ch)).length;
@@ -533,12 +559,28 @@
             const isMagnet = isMagnetHash(result);
             const finalResult = isMagnet ? (config.magnetLinkPrefix + result) : result;
             
-            let resultHtml = `结果: ${finalResult}`;
+            let resultHtml = `<strong>解密结果:</strong> ${finalResult}<br>`;
+            resultHtml += `<strong>密文识别:</strong> ${cipherCount}/${testInput.value.length} 字符 (${Math.round(ratio * 100)}%)<br>`;
+            
             if (isMagnet) {
-                resultHtml += `<br><span style="color:#ff6600;">🔍 识别为磁力链接哈希，已添加前缀</span>`;
+                resultHtml += `<span style="color:#ff6600;">🔍 识别为磁力链接哈希，已添加前缀</span><br>`;
             }
-            resultHtml += `<br>密文比例: ${Math.round(ratio * 100)}%`;
-            resultHtml += `<br>原始长度: ${testInput.value.length} 字符`;
+            
+            // 显示每个字符的映射
+            if (testInput.value.length > 0) {
+                resultHtml += `<div style="margin-top:5px;padding:5px;background:#fff;border:1px solid #eee;border-radius:3px;">`;
+                resultHtml += `<strong>字符映射:</strong><br>`;
+                const chars = testInput.value.split('');
+                for (let i = 0; i < Math.min(chars.length, 20); i++) {
+                    const ch = chars[i];
+                    const plainChar = cipherMap[ch] || ch;
+                    resultHtml += `${ch} → ${plainChar === ' ' ? '[空格]' : plainChar}${i < chars.length - 1 ? ', ' : ''}`;
+                }
+                if (chars.length > 20) {
+                    resultHtml += `... 等 ${chars.length} 个字符`;
+                }
+                resultHtml += `</div>`;
+            }
             
             testResult.innerHTML = resultHtml;
         };
@@ -577,8 +619,20 @@
             menu.style.display = 'none';
         };
 
+        const testBtn = document.createElement('button');
+        testBtn.textContent = '加密测试';
+        testBtn.style.cssText = 'padding:6px 12px;background:#ff6600;color:white;border:none;border-radius:4px;cursor:pointer;flex:1;';
+        testBtn.onclick = () => {
+            const testText = prompt('请输入要加密的文本（支持数字、字母、:?&=.-_% | 等字符）:');
+            if (testText) {
+                const encrypted = encodeStr(testText);
+                alert(`加密结果:\n${encrypted}\n\n字符数: ${encrypted.length}`);
+            }
+        };
+
         btnDiv.appendChild(saveBtn);
         btnDiv.appendChild(decryptNowBtn);
+        btnDiv.appendChild(testBtn);
         btnDiv.appendChild(closeBtn);
         menu.appendChild(btnDiv);
 
@@ -588,7 +642,7 @@
         const toggleBtn = document.createElement('button');
         toggleBtn.id = 'bjm-toggle-btn';
         toggleBtn.innerHTML = '🔧';
-        toggleBtn.title = '解密设置';
+        toggleBtn.title = '百家姓解密设置';
         toggleBtn.style.cssText = `
             position: fixed;
             top: 20px;
@@ -711,7 +765,8 @@
         isInitialized = true;
         
         setTimeout(() => {
-            console.log('百家姓解密脚本初始化...');
+            console.log('百家姓解密脚本 v0.5.0 初始化...');
+            console.log('支持字符: 数字0-9, 字母a-z A-Z, 特殊符号: :?&=.-_% |');
             decodePage();
             setupMenu();
         }, 1000);
@@ -761,7 +816,13 @@
         extractCipherSegments: extractCipherSegments,
         clearProcessingMarks: clearProcessingMarks,
         isMagnetHash: isMagnetHash,
-        processDecryptedText: processDecryptedText
+        processDecryptedText: processDecryptedText,
+        cipherMap: cipherMap,
+        reverseMap: reverseMap
     };
+
+    console.log('百家姓解密脚本 v0.5.0 已加载！');
+    console.log('使用方法: 页面右上角点击🔧按钮打开设置面板');
+    console.log('全局对象: window.BJM 包含所有解密功能');
 
 })();
