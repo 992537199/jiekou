@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         wnflb 解密简洁增强版
+// @name         wnflb 解密增强终版
 // @namespace    http://tampermonkey.net/
-// @version      5.0
-// @description  自动解密并显示在原文下方 + 一键复制
+// @version      6.0
+// @description  多条解密 + 自动链接 + 复制按钮
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
 // @match        https://fuliba2023.net/*
@@ -55,43 +55,9 @@ function decodeCore(t){
 }
 
 /**********************
- * 佛曰（AES）
- **********************/
-const buddhaMap = [/* 原数组保持你已有的即可 */];
-const buddhaMark = ['冥','奢','梵','呐','俱','哆','怯','諳','罰','侄','缽','皤'];
-const KEY='XDXDtudou@KeyFansClub^_^Encode!!';
-const IV='Potato@Key@_@=_=';
-
-async function decodeBuddha(t){
-    let body=t.replace(/^佛[又]?曰[：:]*/,'');
-    let bytes=[];
-    for(let i=0;i<body.length;i++){
-        let c=body[i];
-        if(buddhaMark.includes(c)){
-            i++;
-            let idx=buddhaMap.indexOf(body[i]);
-            if(idx>=0) bytes.push(idx+128);
-        }else{
-            let idx=buddhaMap.indexOf(c);
-            if(idx>=0) bytes.push(idx);
-        }
-    }
-    try{
-        let key=await crypto.subtle.importKey('raw',new TextEncoder().encode(KEY),{name:'AES-CBC'},false,['decrypt']);
-        let dec=await crypto.subtle.decrypt({name:'AES-CBC',iv:new TextEncoder().encode(IV)},key,new Uint8Array(bytes));
-        let arr=new Uint8Array(dec);
-        let pad=arr[arr.length-1];
-        arr=arr.slice(0,arr.length-pad);
-        let s='';
-        for(let i=0;i<arr.length;i+=2)s+=String.fromCharCode(arr[i]|(arr[i+1]<<8));
-        return s;
-    }catch(e){return '';}
-}
-
-/**********************
  * 自动识别
  **********************/
-async function smartDecode(t){
+function smartDecode(t){
     t = t.trim();
 
     let r='';
@@ -102,40 +68,43 @@ async function smartDecode(t){
     r = decodeCore(t);
     if(r.length>MIN_LEN) return r;
 
-    if(/^佛/.test(t)){
-        r = await decodeBuddha(t);
-        if(r.length>MIN_LEN) return r;
-    }
-
     return '';
 }
 
 /**********************
- * UI：插入解密 + 复制按钮
+ * URL 转链接
+ **********************/
+function linkify(text){
+    return text.replace(
+        /(https?:\/\/[^\s]+)/g,
+        '<a href="$1" target="_blank" style="color:#1677ff">$1</a>'
+    );
+}
+
+/**********************
+ * 插入UI
  **********************/
 function insertResult(node, decoded){
 
-    // 防止重复插入
-    if(node.parentNode.querySelector('.decode-box')) return;
-
     let box = document.createElement('div');
-    box.className = 'decode-box';
     box.style = `
-        background:#f6f6f6;
-        border-left:4px solid #ff4d4f;
-        padding:8px;
-        margin:5px 0;
-        font-size:13px;
-        line-height:1.5;
+        background:#fff7e6;
+        border-left:5px solid #fa8c16;
+        padding:10px;
+        margin:6px 0;
+        font-size:15px;
+        line-height:1.6;
+        word-break:break-all;
     `;
 
-    let text = document.createElement('span');
-    text.textContent = decoded;
+    let content = document.createElement('div');
+    content.innerHTML = linkify(decoded);
 
     let btn = document.createElement('button');
     btn.textContent = '复制';
     btn.style = `
-        margin-left:10px;
+        margin-top:6px;
+        padding:3px 10px;
         cursor:pointer;
     `;
 
@@ -145,29 +114,35 @@ function insertResult(node, decoded){
         setTimeout(()=>btn.textContent='复制',1000);
     };
 
-    box.appendChild(text);
+    box.appendChild(content);
     box.appendChild(btn);
 
     node.parentNode.insertBefore(box, node.nextSibling);
 }
 
 /**********************
- * 扫描
+ * 扫描（关键修复点）
  **********************/
-async function scan(){
+function scan(){
     let root = document.querySelector('#postlist') || document.body;
-    let walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
 
-    let n;
-    while(n=walker.nextNode()){
-        let text=n.nodeValue.trim();
-        if(text.length<MIN_LEN) continue;
+    let elements = root.querySelectorAll('p,div,span');
 
-        let decoded = await smartDecode(text);
-        if(decoded){
-            insertResult(n, decoded);
-        }
-    }
+    elements.forEach(el => {
+        let text = el.innerText;
+
+        if(!text || text.length < MIN_LEN) return;
+
+        // 按行拆分（关键）
+        let lines = text.split(/\n|<br>/);
+
+        lines.forEach(line => {
+            let decoded = smartDecode(line);
+            if(decoded){
+                insertResult(el, decoded);
+            }
+        });
+    });
 }
 
 /**********************
