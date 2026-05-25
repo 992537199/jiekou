@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         wnflb 自动解密终极稳定版
+// @name         wnflb 解密增强版 Pro
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  百家姓 / 核心价值观 / 佛曰 自动解密（修复不生效）
+// @version      4.0
+// @description  全自动暗号解密 + 磁力提取 + 悬浮面板
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
 // @match        https://fuliba2023.net/*
@@ -12,30 +12,49 @@
 (function () {
 'use strict';
 
-const MIN_LEN = 10;
-const processed = new WeakSet();
+const MIN_LEN = 8;
+const results = new Set();
 
 /**********************
  * 百家姓
  **********************/
-const nameMap = { /* 你的完整映射 */ };
+const nameMap = {
 
-function isBaijiaxing(t){
-    return /^[赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻福水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳唐罗薛伍余米贝姚孟顾尹江钟竺赖卜]+$/.test(t);
-}
+        "赵":"0","钱":"1","孙":"2","李":"3","周":"4","吴":"5","郑":"6","王":"7","冯":"8","陈":"9",
+
+        "褚":"a","卫":"b","蒋":"c","沈":"d","韩":"e","杨":"f","朱":"g","秦":"h","尤":"i","许":"j",
+
+        "何":"k","吕":"l","施":"m","张":"n","孔":"o","曹":"p","严":"q","华":"r","金":"s","魏":"t",
+
+        "陶":"u","姜":"v","戚":"w","谢":"x","邹":"y","喻":"z",
+
+        "福":"A","水":"B","窦":"C","章":"D","云":"E","苏":"F","潘":"G","葛":"H","奚":"I","范":"J",
+
+        "彭":"K","郎":"L","鲁":"M","韦":"N","昌":"O","马":"P","苗":"Q","凤":"R","花":"S","方":"T",
+
+        "俞":"U","任":"V","袁":"W","柳":"X","唐":"Y","罗":"Z",
+
+        "薛":".","伍":"-","余":"_","米":"+","贝":"=",
+
+        "姚":"/","孟":"?","顾":"#","尹":"%","江":"&",
+
+        "钟":"*","竺":":","赖":"|","卜":"|"
+
+    };
+
 function decodeBaijiaxing(t){
+    t = t.replace(/\s+/g,'');
     return [...t].map(c=>nameMap[c]||'').join('');
 }
 
 /**********************
- * 核心价值观（base12）
+ * 核心价值观
  **********************/
 const coreValues = ['富强','民主','文明','和谐','自由','平等','公正','法治','爱国','敬业','诚信','友善'];
 
-function isCore(t){
-    return /^[富强民主文明和谐自由平等公正法治爱国敬业诚信友善]+$/.test(t) && t.length%6===0;
-}
 function decodeCore(t){
+    t = t.replace(/\s+/g,'');
+    if(t.length%6!==0) return '';
     let bytes=[];
     for(let i=0;i<t.length;i+=6){
         let d1=coreValues.indexOf(t.substr(i,2));
@@ -48,28 +67,12 @@ function decodeCore(t){
 }
 
 /**********************
- * 佛曰 AES
+ * 佛曰（AES）
  **********************/
-const buddhaMap = [/* 原数组 그대로 */];
+const buddhaMap = [/* 原数组 */];
 const buddhaMark = ['冥','奢','梵','呐','俱','哆','怯','諳','罰','侄','缽','皤'];
 const KEY='XDXDtudou@KeyFansClub^_^Encode!!';
 const IV='Potato@Key@_@=_=';
-
-function isBuddha(t){
-    return /^佛[又]?曰/.test(t);
-}
-
-function strToBytes(s){return new Uint8Array([...s].map(c=>c.charCodeAt(0)));}
-
-function utf16LE(arr){
-    let s='';for(let i=0;i<arr.length;i+=2)s+=String.fromCharCode(arr[i]|(arr[i+1]<<8));
-    return s;
-}
-
-function unpad(d){
-    let p=d[d.length-1];
-    return d.slice(0,d.length-p);
-}
 
 async function decodeBuddha(t){
     let body=t.replace(/^佛[又]?曰[：:]*/,'');
@@ -86,93 +89,120 @@ async function decodeBuddha(t){
         }
     }
     try{
-        let key=await crypto.subtle.importKey('raw',strToBytes(KEY),{name:'AES-CBC'},false,['decrypt']);
-        let dec=await crypto.subtle.decrypt({name:'AES-CBC',iv:strToBytes(IV)},key,new Uint8Array(bytes));
-        return utf16LE(unpad(new Uint8Array(dec)));
+        let key=await crypto.subtle.importKey('raw',new TextEncoder().encode(KEY),{name:'AES-CBC'},false,['decrypt']);
+        let dec=await crypto.subtle.decrypt({name:'AES-CBC',iv:new TextEncoder().encode(IV)},key,new Uint8Array(bytes));
+        let arr=new Uint8Array(dec);
+        let pad=arr[arr.length-1];
+        arr=arr.slice(0,arr.length-pad);
+        let s='';
+        for(let i=0;i<arr.length;i+=2)s+=String.fromCharCode(arr[i]|(arr[i+1]<<8));
+        return s;
     }catch(e){return '';}
 }
 
 /**********************
- * 链接处理
+ * 自动识别（增强版）
+ **********************/
+async function smartDecode(t){
+    t = t.trim();
+
+    let r='';
+
+    // 百家姓
+    r = decodeBaijiaxing(t);
+    if(r.length>MIN_LEN) return r;
+
+    // 核心价值观
+    r = decodeCore(t);
+    if(r.length>MIN_LEN) return r;
+
+    // 佛曰
+    if(/^佛/.test(t)){
+        r = await decodeBuddha(t);
+        if(r.length>MIN_LEN) return r;
+    }
+
+    return '';
+}
+
+/**********************
+ * 链接修复
  **********************/
 function fixLink(t){
-    if(/^https?:\/\//i.test(t)) return t;
     if(/^[a-f0-9]{40}$/i.test(t)) return 'magnet:?xt=urn:btih:'+t;
     if(/^[a-f0-9]{32}$/i.test(t)) return 'ed2k://|file|'+t+'|/';
     return t;
 }
 
 /**********************
- * UI
+ * 悬浮面板
  **********************/
-function addResult(node,text){
-    let box=document.createElement('div');
-    box.style.cssText="margin-top:6px;padding:6px;border:1px dashed #999;color:#0f0;";
+const panel = document.createElement('div');
+panel.style = `
+position:fixed;top:80px;right:10px;z-index:99999;
+background:#111;color:#0f0;padding:10px;width:300px;
+max-height:400px;overflow:auto;font-size:12px;
+`;
+document.body.appendChild(panel);
 
-    let fixed=fixLink(text);
-
-    if(/^(http|magnet|ed2k)/.test(fixed)){
-        let a=document.createElement('a');
-        a.href=fixed;a.innerText=fixed;a.target='_blank';
-        box.appendChild(a);
-    }else box.innerText=fixed;
-
-    let btn=document.createElement('button');
-    btn.innerText='复制';
-    btn.onclick=()=>GM_setClipboard(fixed);
-    box.appendChild(btn);
-
-    node.appendChild(box);
+function updatePanel(){
+    panel.innerHTML = `<b>解密结果 (${results.size})</b><br>` +
+    [...results].map(x=>`<div>${x}</div>`).join('') +
+    `<hr><button id="copyAll">复制全部</button>`;
+    document.getElementById('copyAll').onclick=()=>{
+        GM_setClipboard([...results].join('\n'));
+    };
 }
 
 /**********************
- * 核心逻辑（修复点）
+ * 扫描正文（只扫帖子）
  **********************/
-async function handle(node){
-    if(processed.has(node)) return;
-
-    let text=node.nodeValue.trim();
-    if(!text || text.length<MIN_LEN) return;
-
-    let result='';
-
-    if(isBaijiaxing(text)){
-        result=decodeBaijiaxing(text);
-    }else if(isCore(text)){
-        result=decodeCore(text);
-    }else if(isBuddha(text)){
-        result=await decodeBuddha(text); // ⭐关键修复
-    }
-
-    if(result && result.length>=MIN_LEN){
-        addResult(node.parentNode,result);
-        processed.add(node);
-    }
+function getContentRoot(){
+    return document.querySelector('#postlist') || document.body;
 }
 
 /**********************
- * 只扫描文本节点（关键优化）
+ * 主扫描
  **********************/
-function scan(root){
-    let walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null,false);
+async function scan(){
+    let root = getContentRoot();
+    let walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+
     let n;
     while(n=walker.nextNode()){
-        handle(n);
+        let text=n.nodeValue.trim();
+        if(text.length<MIN_LEN) continue;
+
+        let decoded = await smartDecode(text);
+        if(decoded){
+            decoded = fixLink(decoded);
+            if(!results.has(decoded)){
+                results.add(decoded);
+                updatePanel();
+            }
+        }
     }
 }
 
 /**********************
- * MutationObserver（关键修复）
+ * 鼠标悬浮解密（爽点功能）
  **********************/
-const observer=new MutationObserver(muts=>{
-    muts.forEach(m=>{
-        m.addedNodes.forEach(n=>{
-            if(n.nodeType===1) scan(n);
-        });
-    });
+document.addEventListener('mouseover', async e=>{
+    let t=e.target.innerText;
+    if(!t) return;
+
+    let d=await smartDecode(t);
+    if(d){
+        e.target.title = "解密："+d;
+    }
 });
 
-observer.observe(document.body,{childList:true,subtree:true});
-scan(document.body);
+/**********************
+ * 监听
+ **********************/
+const ob=new MutationObserver(scan);
+ob.observe(document.body,{childList:true,subtree:true});
+
+scan();
 
 })();
