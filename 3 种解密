@@ -1,0 +1,200 @@
+// ==UserScript==
+// @name         wnflb 自动解密终极版（全算法支持）
+// @namespace    http://tampermonkey.net/
+// @version      2.0
+// @description  百家姓 + 核心价值观 + 与佛论禅 自动解密
+// @match        https://www.wnflb2023.com/*
+// @grant        GM_setClipboard
+// ==/UserScript==
+
+(function () {
+'use strict';
+
+/**********************
+ * ⚙️ 配置
+ **********************/
+const MIN_LEN = 10;
+
+/**********************
+ * 百家姓解密
+ **********************/
+const nameMap = {
+ "赵":"0","钱":"1","孙":"2","李":"3","周":"4","吴":"5","郑":"6","王":"7","冯":"8","陈":"9",
+ "褚":"a","卫":"b","蒋":"c","沈":"d","韩":"e","杨":"f","朱":"g","秦":"h","尤":"i","许":"j",
+ "何":"k","吕":"l","施":"m","张":"n","孔":"o","曹":"p","严":"q","华":"r","金":"s","魏":"t",
+ "陶":"u","姜":"v","戚":"w","谢":"x","邹":"y","喻":"z",
+ "福":"A","水":"B","窦":"C","章":"D","云":"E","苏":"F","潘":"G","葛":"H","奚":"I","范":"J",
+ "彭":"K","郎":"L","鲁":"M","韦":"N","昌":"O","马":"P","苗":"Q","凤":"R","花":"S","方":"T",
+ "俞":"U","任":"V","袁":"W","柳":"X","唐":"Y","罗":"Z",
+ "薛":".","伍":"-","余":"_","米":"+","贝":"=","姚":"/","孟":"?","顾":"#","尹":"%","江":"&","钟":"*","竺":":","赖":"|","卜":"|"
+};
+
+function isBaijiaxing(t) {
+    return /^[赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻福水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳唐罗薛伍余米贝姚孟顾尹江钟竺赖卜]+$/.test(t);
+}
+
+function decodeBaijiaxing(str) {
+    let r = '';
+    for (let c of str) if (nameMap[c]) r += nameMap[c];
+    return r;
+}
+
+/**********************
+ * 核心价值观（base12）
+ **********************/
+const coreValues = ['富强','民主','文明','和谐','自由','平等','公正','法治','爱国','敬业','诚信','友善'];
+
+function isCoreValues(t) {
+    return /^[富强民主文明和谐自由平等公正法治爱国敬业诚信友善]+$/.test(t) && t.length % 6 === 0;
+}
+
+function decodeCoreValues(str) {
+    let bytes = [];
+    for (let i = 0; i < str.length; i += 6) {
+        let d1 = coreValues.indexOf(str.substr(i,2));
+        let d2 = coreValues.indexOf(str.substr(i+2,2));
+        let d3 = coreValues.indexOf(str.substr(i+4,2));
+        if (d1<0||d2<0||d3<0) return '';
+        bytes.push(d1*144 + d2*12 + d3);
+    }
+    return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
+/**********************
+ * 与佛论禅（AES）
+ **********************/
+const buddhaMap = [...[
+'滅','苦','婆','娑','耶','陀','跋','多','漫','都','殿','悉','夜','爍','帝','吉',
+'利','阿','無','南','那','怛','喝','羯','勝','摩','伽','謹','波','者','穆','僧',
+'室','藝','尼','瑟','地','彌','菩','提','蘇','醯','盧','呼','舍','佛','參','沙',
+'伊','隸','麼','遮','闍','度','蒙','孕','薩','夷','迦','他','姪','豆','特','逝',
+'朋','輸','楞','栗','寫','數','曳','諦','羅','曰','咒','即','密','若','般','故',
+'不','實','真','訶','切','一','除','能','等','是','上','明','大','神','知','三',
+'藐','耨','得','依','諸','世','槃','涅','竟','究','想','夢','倒','顛','離','遠',
+'怖','恐','有','礙','心','所','以','亦','智','道','。','集','盡','死','老','至'
+]];
+const buddhaMark = ['冥','奢','梵','呐','俱','哆','怯','諳','罰','侄','缽','皤'];
+const BUDDHA_KEY = 'XDXDtudou@KeyFansClub^_^Encode!!';
+const BUDDHA_IV  = 'Potato@Key@_@=_=';
+
+function isBuddha(t) {
+    return /^佛[又]?曰/.test(t);
+}
+
+function strToBytes(str) {
+    return new Uint8Array([...str].map(c=>c.charCodeAt(0)));
+}
+
+function utf16LEToString(arr) {
+    let s='';
+    for(let i=0;i<arr.length;i+=2){
+        s+=String.fromCharCode(arr[i]|(arr[i+1]<<8));
+    }
+    return s;
+}
+
+function pkcs7Unpad(data){
+    let pad=data[data.length-1];
+    return data.slice(0,data.length-pad);
+}
+
+async function decodeBuddha(text){
+    let body=text.replace(/^佛[又]?曰[：:]*/,'');
+    let bytes=[];
+    for(let i=0;i<body.length;i++){
+        let c=body[i];
+        if(buddhaMark.includes(c)){
+            i++;
+            let idx=buddhaMap.indexOf(body[i]);
+            if(idx>=0) bytes.push(idx+128);
+        }else{
+            let idx=buddhaMap.indexOf(c);
+            if(idx>=0) bytes.push(idx);
+        }
+    }
+
+    try{
+        let key=await crypto.subtle.importKey('raw',strToBytes(BUDDHA_KEY),{name:'AES-CBC'},false,['decrypt']);
+        let decrypted=await crypto.subtle.decrypt({name:'AES-CBC',iv:strToBytes(BUDDHA_IV)},key,new Uint8Array(bytes));
+        return utf16LEToString(pkcs7Unpad(new Uint8Array(decrypted)));
+    }catch(e){
+        return '';
+    }
+}
+
+/**********************
+ * 链接修复
+ **********************/
+function fixLink(str){
+    if(/^https?:\/\//i.test(str)) return str;
+    if(/^[a-fA-F0-9]{40}$/.test(str)) return 'magnet:?xt=urn:btih:'+str;
+    if(/^[a-fA-F0-9]{32}$/.test(str)) return 'ed2k://|file|'+str+'|/';
+    return str;
+}
+
+/**********************
+ * UI
+ **********************/
+function createBox(text){
+    let box=document.createElement('div');
+    box.style.cssText="margin-top:6px;padding:6px;border:1px dashed #999;";
+
+    let fixed=fixLink(text);
+
+    if(/^(https|magnet|ed2k)/.test(fixed)){
+        let a=document.createElement('a');
+        a.href=fixed;
+        a.innerText=fixed;
+        a.target='_blank';
+        box.appendChild(a);
+    }else{
+        box.innerText=fixed;
+    }
+
+    let btn=document.createElement('button');
+    btn.innerText='复制';
+    btn.style.marginLeft='10px';
+    btn.onclick=()=>{
+        GM_setClipboard(fixed);
+        btn.innerText='已复制';
+        setTimeout(()=>btn.innerText='复制',1000);
+    };
+
+    box.appendChild(btn);
+    return box;
+}
+
+/**********************
+ * 主逻辑
+ **********************/
+async function processNode(node){
+    if(node.dataset.decoded) return;
+
+    let text=node.innerText.trim();
+    if(text.length<MIN_LEN) return;
+
+    let result=null;
+
+    if(isBaijiaxing(text)){
+        result=decodeBaijiaxing(text);
+    }else if(isCoreValues(text)){
+        result=decodeCoreValues(text);
+    }else if(isBuddha(text)){
+        result=await decodeBuddha(text);
+    }
+
+    if(result && result.length>=MIN_LEN){
+        node.appendChild(createBox(result));
+        node.dataset.decoded=1;
+    }
+}
+
+function scan(){
+    document.querySelectorAll('p,span,div,font').forEach(n=>{
+        processNode(n);
+    });
+}
+
+setInterval(scan,2000);
+
+})();
