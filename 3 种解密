@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         福利吧解密增强版（百家姓+核心价值观+佛曰）
+// @name         福利吧终极解密神器（最终版）
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  自动解密并显示在下方 + 复制按钮
+// @version      3.0
+// @description  百家姓 + 核心价值观 + 佛曰 完整解密 + 磁链点击 + 批量复制
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
 // @match        https://fuliba2023.net/*
@@ -10,184 +10,191 @@
 // ==/UserScript==
 
 (function () {
-  'use strict';
+'use strict';
 
-  /* ================== 你的原始核心代码（完整保留） ================== */
+/* ================== 开关 ================== */
+let ENABLE = true;
 
-  var magnetHeader = "magnet:?xt=urn:btih:";
+/* ================== 百家姓 ================== */
+const nameMap = { "赵":"0","钱":"1","孙":"2","李":"3","周":"4","吴":"5","郑":"6","王":"7","冯":"8","陈":"9",
+"褚":"a","卫":"b","蒋":"c","沈":"d","韩":"e","杨":"f","朱":"g","秦":"h","尤":"i","许":"j",
+"何":"k","吕":"l","施":"m","张":"n","孔":"o","曹":"p","严":"q","华":"r","金":"s","魏":"t",
+"陶":"u","姜":"v","戚":"w","谢":"x","邹":"y","喻":"z","福":"A","水":"B","窦":"C","章":"D",
+"云":"E","苏":"F","潘":"G","葛":"H","奚":"I","范":"J","彭":"K","郎":"L","鲁":"M","韦":"N",
+"昌":"O","马":"P","苗":"Q","凤":"R","花":"S","方":"T","俞":"U","任":"V","袁":"W","柳":"X",
+"唐":"Y","罗":"Z","薛":".","伍":"-","余":"_","米":"+","贝":"=","姚":"/","孟":"?","顾":"#",
+"尹":"%","江":"&","钟":"*","竺":":","赖":"|","卜":"|" };
 
-  var nameMap = {
-    "赵":"0","钱":"1","孙":"2","李":"3","周":"4","吴":"5","郑":"6","王":"7","冯":"8","陈":"9",
-    "褚":"a","卫":"b","蒋":"c","沈":"d","韩":"e","杨":"f","朱":"g","秦":"h","尤":"i","许":"j",
-    "何":"k","吕":"l","施":"m","张":"n","孔":"o","曹":"p","严":"q","华":"r","金":"s","魏":"t",
-    "陶":"u","姜":"v","戚":"w","谢":"x","邹":"y","喻":"z",
-    "福":"A","水":"B","窦":"C","章":"D","云":"E","苏":"F","潘":"G","葛":"H","奚":"I","范":"J",
-    "彭":"K","郎":"L","鲁":"M","韦":"N","昌":"O","马":"P","苗":"Q","凤":"R","花":"S","方":"T",
-    "俞":"U","任":"V","袁":"W","柳":"X","唐":"Y","罗":"Z",
-    "薛":".","伍":"-","余":"_","米":"+","贝":"=","姚":"/","孟":"?","顾":"#","尹":"%","江":"&","钟":"*","竺":":","赖":"|","卜":"|"
-  };
+function decodeBJX(str){
+  let r=''; for(let c of str) r+=nameMap[c]||'';
+  if(!r) return '';
+  if(r.startsWith('magnet:')||r.startsWith('ed2k')) return r;
+  return 'magnet:?xt=urn:btih:'+r;
+}
 
-  var coreValues = ['富强','民主','文明','和谐','自由','平等','公正','法治','爱国','敬业','诚信','友善'];
+/* ================== 核心价值观 ================== */
+const cv = ['富强','民主','文明','和谐','自由','平等','公正','法治','爱国','敬业','诚信','友善'];
 
-  function valuesDecode(str) {
-    if (str.length % 6 !== 0) return '';
-    var bytes = [];
-    for (var i = 0; i < str.length; i += 6) {
-      var d1 = coreValues.indexOf(str.substring(i, i+2));
-      var d2 = coreValues.indexOf(str.substring(i+2, i+4));
-      var d3 = coreValues.indexOf(str.substring(i+4, i+6));
-      if (d1 < 0 || d2 < 0 || d3 < 0) return '';
-      bytes.push(d1 * 144 + d2 * 12 + d3);
+function decodeCV(s){
+  if(s.length%6!==0) return '';
+  let b=[];
+  for(let i=0;i<s.length;i+=6){
+    let d1=cv.indexOf(s.substr(i,2));
+    let d2=cv.indexOf(s.substr(i+2,2));
+    let d3=cv.indexOf(s.substr(i+4,2));
+    if(d1<0||d2<0||d3<0) return '';
+    b.push(d1*144+d2*12+d3);
+  }
+  return new TextDecoder().decode(new Uint8Array(b));
+}
+
+/* ================== 佛曰 ================== */
+const buddhaMap=[ '滅','苦','婆','娑','耶','陀','跋','多','漫','都','殿','悉','夜','爍','帝','吉',
+'利','阿','無','南','那','怛','喝','羯','勝','摩','伽','謹','波','者','穆','僧',
+'室','藝','尼','瑟','地','彌','菩','提','蘇','醯','盧','呼','舍','佛','參','沙',
+'伊','隸','麼','遮','闍','度','蒙','孕','薩','夷','迦','他','姪','豆','特','逝',
+'朋','輸','楞','栗','寫','數','曳','諦','羅','曰','咒','即','密','若','般','故',
+'不','實','真','訶','切','一','除','能','等','是','上','明','大','神','知','三',
+'藐','耨','得','依','諸','世','槃','涅','竟','究','想','夢','倒','顛','離','遠',
+'怖','恐','有','礙','心','所','以','亦','智','道','。','集','盡','死','老','至'];
+
+const mark=['冥','奢','梵','呐','俱','哆','怯','諳','罰','侄','缽','皤'];
+
+const KEY=new TextEncoder().encode('XDXDtudou@KeyFansClub^_^Encode!!');
+const IV=new TextEncoder().encode('Potato@Key@_@=_=');
+
+function isBuddha(t){
+  if(!/^佛[又]?曰/.test(t)) return false;
+  let b=t.replace(/^佛[又]?曰[:：]?/,'');
+  if(b.length<20) return false;
+  return [...b].every(c=>buddhaMap.includes(c)||mark.includes(c));
+}
+
+async function decodeBuddha(t){
+  let b=t.replace(/^佛[又]?曰[:：]?/,'');
+  let bytes=[];
+  for(let i=0;i<b.length;i++){
+    let c=b[i];
+    if(mark.includes(c)){ i++; bytes.push(buddhaMap.indexOf(b[i])+128); }
+    else bytes.push(buddhaMap.indexOf(c));
+  }
+  try{
+    let key=await crypto.subtle.importKey("raw",KEY,{name:"AES-CBC"},false,["decrypt"]);
+    let dec=await crypto.subtle.decrypt({name:"AES-CBC",iv:IV},key,new Uint8Array(bytes));
+    let arr=new Uint8Array(dec);
+    arr=arr.slice(0,arr.length-arr[arr.length-1]);
+    let s=''; for(let i=0;i<arr.length;i+=2) s+=String.fromCharCode(arr[i]|(arr[i+1]<<8));
+    return s;
+  }catch{return '';}
+}
+
+/* ================== UI ================== */
+function createBox(text){
+  let d=document.createElement('div');
+  d.style="margin-top:6px;padding:6px;background:#f0f8ff;border-left:3px solid #2196f3;font-size:14px;word-break:break-all;";
+  
+  // 磁链点击
+  if(text.startsWith('magnet')){
+    let a=document.createElement('a');
+    a.href=text;
+    a.textContent=text;
+    a.target='_blank';
+    d.appendChild(a);
+  }else{
+    d.textContent=text;
+  }
+
+  let btn=document.createElement('button');
+  btn.textContent='复制';
+  btn.style.marginLeft='10px';
+  btn.onclick=()=>{GM_setClipboard(text);btn.textContent='已复制';setTimeout(()=>btn.textContent='复制',1000);}
+  d.appendChild(btn);
+
+  return d;
+}
+
+/* ================== 队列（防卡） ================== */
+let queue=[],running=false;
+function pushTask(fn){queue.push(fn);run();}
+async function run(){
+  if(running) return;
+  running=true;
+  while(queue.length){
+    await queue.shift()();
+    await new Promise(r=>setTimeout(r,50));
+  }
+  running=false;
+}
+
+/* ================== 提取 ================== */
+function extract(text){
+  let r=[];
+  let bjx=text.match(/[\u4E00-\u9FA5]{20,}/g);
+  if(bjx) r.push(...bjx);
+  let cvm=text.match(/(?:富强|民主|文明|和谐|自由|平等|公正|法治|爱国|敬业|诚信|友善){6,}/g);
+  if(cvm) r.push(...cvm);
+  let bud=text.match(/佛[又]?曰[:：]?[\u4E00-\u9FA5]+/g);
+  if(bud) r.push(...bud);
+  return r;
+}
+
+/* ================== 主逻辑 ================== */
+function handle(node){
+  if(!ENABLE||node.dataset.done) return;
+  let t=node.innerText;
+  if(!t) return;
+
+  let arr=extract(t);
+  if(!arr.length) return;
+
+  arr.forEach(c=>{
+    if(isBuddha(c)){
+      pushTask(async ()=>{
+        let r=await decodeBuddha(c);
+        if(r) node.appendChild(createBox(r));
+      });
+    }else if(c.includes('富强')){
+      let r=decodeCV(c);
+      if(r) node.appendChild(createBox(r));
+    }else{
+      let r=decodeBJX(c);
+      if(r) node.appendChild(createBox(r));
     }
-    return new TextDecoder().decode(new Uint8Array(bytes));
-  }
+  });
 
-  function isCoreValues(t) {
-    return /^[富强民主文明和谐自由平等公正法治爱国敬业诚信友善]+$/.test(t) && t.length % 6 === 0;
-  }
+  node.dataset.done=1;
+}
 
-  function cy(arr, val) { for (var k in arr) if (k === val) return arr[k]; return ''; }
-  function ay(arr, val) { for (var k in arr) if (arr[k] === val) return k; return ''; }
+/* ================== 扫描 ================== */
+function scan(){
+  document.querySelectorAll('p,td,div,span').forEach(handle);
+}
+setTimeout(scan,1500);
 
-  function isChinese(t) { return /^[\u4E00-\u9FA5]+$/.test(t); }
+let timer;
+new MutationObserver(()=>{
+  clearTimeout(timer);
+  timer=setTimeout(scan,800);
+}).observe(document.body,{childList:true,subtree:true});
 
-  function isMagnet(t) { return /^magnet:\?xt=urn:btih:/i.test(t); }
+/* ================== 控制面板 ================== */
+let panel=document.createElement('div');
+panel.style="position:fixed;top:100px;right:10px;z-index:9999;background:#fff;padding:8px;border:1px solid #ccc;";
+panel.innerHTML=`
+<button id="toggle">解密开关</button>
+<button id="copyall">复制全部</button>
+`;
+document.body.appendChild(panel);
 
-  function transToPlain(str) {
-    str = str.trim();
-    var c = '';
-    for (var i = 0; i < str.length; i++) c += cy(nameMap, str[i]);
+document.getElementById('toggle').onclick=()=>{
+  ENABLE=!ENABLE;
+  alert('解密：'+(ENABLE?'开启':'关闭'));
+};
 
-    var withMagnet = magnetHeader + c;
-    if (isMagnet(withMagnet)) return withMagnet;
-    return c;
-  }
-
-  /* ================== 佛曰解密 ================== */
-
-  var buddhaMap = [ '滅','苦','婆','娑','耶','陀','跋','多','漫','都','殿','悉','夜','爍','帝','吉',
-  '利','阿','無','南','那','怛','喝','羯','勝','摩','伽','謹','波','者','穆','僧',
-  '室','藝','尼','瑟','地','彌','菩','提','蘇','醯','盧','呼','舍','佛','參','沙',
-  '伊','隸','麼','遮','闍','度','蒙','孕','薩','夷','迦','他','姪','豆','特','逝',
-  '朋','輸','楞','栗','寫','數','曳','諦','羅','曰','咒','即','密','若','般','故',
-  '不','實','真','訶','切','一','除','能','等','是','上','明','大','神','知','三',
-  '藐','耨','得','依','諸','世','槃','涅','竟','究','想','夢','倒','顛','離','遠',
-  '怖','恐','有','礙','心','所','以','亦','智','道','。','集','盡','死','老','至' ];
-
-  var buddhaMark = ['冥','奢','梵','呐','俱','哆','怯','諳','罰','侄','缽','皤'];
-
-  var KEY = new TextEncoder().encode('XDXDtudou@KeyFansClub^_^Encode!!');
-  var IV  = new TextEncoder().encode('Potato@Key@_@=_=');
-
-  async function buddhaDecode(text) {
-    let body = text.replace(/^佛[又]?曰[:：]?/, '');
-    let bytes = [];
-
-    for (let i = 0; i < body.length; i++) {
-      let ch = body[i];
-      if (buddhaMark.includes(ch)) {
-        i++;
-        let idx = buddhaMap.indexOf(body[i]);
-        if (idx >= 0) bytes.push(idx + 128);
-      } else {
-        let idx = buddhaMap.indexOf(ch);
-        if (idx >= 0) bytes.push(idx);
-      }
-    }
-
-    try {
-      let key = await crypto.subtle.importKey("raw", KEY, { name: "AES-CBC" }, false, ["decrypt"]);
-      let decrypted = await crypto.subtle.decrypt({ name: "AES-CBC", iv: IV }, key, new Uint8Array(bytes));
-
-      let arr = new Uint8Array(decrypted);
-      let pad = arr[arr.length - 1];
-      arr = arr.slice(0, arr.length - pad);
-
-      let str = '';
-      for (let i = 0; i < arr.length; i += 2) {
-        str += String.fromCharCode(arr[i] | (arr[i+1] << 8));
-      }
-      return str;
-
-    } catch {
-      return '[佛曰解密失败]';
-    }
-  }
-
-  function isBuddha(t) {
-    return /^佛[又]?曰/.test(t);
-  }
-
-  /* ================== UI ================== */
-
-  function createBox(text) {
-    let box = document.createElement('div');
-    box.style.cssText = `
-      margin-top:6px;
-      padding:6px;
-      background:#f6f6f6;
-      border-left:3px solid #4caf50;
-      font-size:14px;
-      word-break:break-all;
-    `;
-
-    let btn = document.createElement('button');
-    btn.innerText = '复制';
-    btn.style.marginLeft = '10px';
-
-    btn.onclick = () => {
-      GM_setClipboard(text);
-      btn.innerText = '已复制';
-      setTimeout(()=>btn.innerText='复制',1000);
-    };
-
-    box.innerText = text;
-    box.appendChild(btn);
-
-    return box;
-  }
-
-  /* ================== 核心处理 ================== */
-
-  async function handleNode(node) {
-    if (!node || node.dataset.decoded) return;
-
-    let text = node.innerText?.trim();
-    if (!text || text.length < 6) return;
-
-    let result = '';
-
-    if (isCoreValues(text)) {
-      result = valuesDecode(text);
-    } else if (isBuddha(text)) {
-      result = await buddhaDecode(text);
-    } else if (isChinese(text)) {
-      result = transToPlain(text);
-    }
-
-    if (result) {
-      let box = createBox(result);
-      node.appendChild(box);
-      node.dataset.decoded = 1;
-    }
-  }
-
-  /* ================== 扫描 + 监听 ================== */
-
-  function scan() {
-    document.querySelectorAll('p,span,div').forEach(el => {
-      handleNode(el);
-    });
-  }
-
-  // 初始
-  setTimeout(scan, 1000);
-
-  // 动态监听（防卡顿节流）
-  let timer = null;
-  new MutationObserver(() => {
-    clearTimeout(timer);
-    timer = setTimeout(scan, 500);
-  }).observe(document.body, { childList: true, subtree: true });
+document.getElementById('copyall').onclick=()=>{
+  let all=[...document.querySelectorAll('a[href^="magnet"]')].map(a=>a.href).join('\n');
+  GM_setClipboard(all);
+  alert('已复制全部磁链');
+};
 
 })();
