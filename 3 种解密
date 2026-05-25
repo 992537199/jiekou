@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         wnflb 解密增强终版
+// @name         wnflb 解密稳定优化版
 // @namespace    http://tampermonkey.net/
-// @version      6.0
-// @description  多条解密 + 自动链接 + 复制按钮
+// @version      7.0
+// @description  高性能解密（不卡死）
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
 // @match        https://fuliba2023.net/*
@@ -13,6 +13,8 @@
 'use strict';
 
 const MIN_LEN = 8;
+const cache = new Set();
+let running = false;
 
 /**********************
  * 百家姓
@@ -55,20 +57,24 @@ function decodeCore(t){
 }
 
 /**********************
- * 自动识别
+ * 解密
  **********************/
 function smartDecode(t){
-    t = t.trim();
+    if(cache.has(t)) return null;
 
-    let r='';
-
-    r = decodeBaijiaxing(t);
-    if(r.length>MIN_LEN) return r;
+    let r = decodeBaijiaxing(t);
+    if(r.length > MIN_LEN){
+        cache.add(t);
+        return r;
+    }
 
     r = decodeCore(t);
-    if(r.length>MIN_LEN) return r;
+    if(r.length > MIN_LEN){
+        cache.add(t);
+        return r;
+    }
 
-    return '';
+    return null;
 }
 
 /**********************
@@ -82,9 +88,12 @@ function linkify(text){
 }
 
 /**********************
- * 插入UI
+ * UI
  **********************/
-function insertResult(node, decoded){
+function insertResult(el, decoded){
+
+    if(el.dataset.decoded) return;
+    el.dataset.decoded = "1";
 
     let box = document.createElement('div');
     box.style = `
@@ -94,7 +103,6 @@ function insertResult(node, decoded){
         margin:6px 0;
         font-size:15px;
         line-height:1.6;
-        word-break:break-all;
     `;
 
     let content = document.createElement('div');
@@ -102,11 +110,6 @@ function insertResult(node, decoded){
 
     let btn = document.createElement('button');
     btn.textContent = '复制';
-    btn.style = `
-        margin-top:6px;
-        padding:3px 10px;
-        cursor:pointer;
-    `;
 
     btn.onclick = () => {
         GM_setClipboard(decoded);
@@ -117,40 +120,57 @@ function insertResult(node, decoded){
     box.appendChild(content);
     box.appendChild(btn);
 
-    node.parentNode.insertBefore(box, node.nextSibling);
+    el.appendChild(box);
 }
 
 /**********************
- * 扫描（关键修复点）
+ * 扫描（只处理当前节点）
  **********************/
-function scan(){
-    let root = document.querySelector('#postlist') || document.body;
+function process(el){
+    if(!el.innerText) return;
 
-    let elements = root.querySelectorAll('p,div,span');
+    let lines = el.innerText.split(/\n/);
 
-    elements.forEach(el => {
-        let text = el.innerText;
+    for(let line of lines){
+        line = line.trim();
+        if(line.length < MIN_LEN) continue;
 
-        if(!text || text.length < MIN_LEN) return;
+        let decoded = smartDecode(line);
+        if(decoded){
+            insertResult(el, decoded);
+            break;
+        }
+    }
+}
 
-        // 按行拆分（关键）
-        let lines = text.split(/\n|<br>/);
+/**********************
+ * 初始扫描（只一次）
+ **********************/
+function init(){
+    document.querySelectorAll('#postlist p, #postlist div')
+        .forEach(process);
+}
 
-        lines.forEach(line => {
-            let decoded = smartDecode(line);
-            if(decoded){
-                insertResult(el, decoded);
+/**********************
+ * 监听新增节点（关键优化）
+ **********************/
+const ob = new MutationObserver(mutations=>{
+    if(running) return;
+    running = true;
+
+    mutations.forEach(m=>{
+        m.addedNodes.forEach(node=>{
+            if(node.nodeType === 1){
+                process(node);
             }
         });
     });
-}
 
-/**********************
- * 监听
- **********************/
-const ob=new MutationObserver(scan);
+    running = false;
+});
+
 ob.observe(document.body,{childList:true,subtree:true});
 
-scan();
+init();
 
 })();
