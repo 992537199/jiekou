@@ -1,0 +1,97 @@
+// ==UserScript==
+// @name            福利吧小助手
+// @namespace       https://greasyfork.org/zh-CN/users/860681-aoguai
+// @version         1.0.6.0
+// @description     一个用于增强福利吧功能的油猴脚本，提供链接提取、界面美化、编解码等功能。
+// @author          aoguai
+// @match           *://*
+
+// @icon            data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAQAABMLAAATCwAAAAAAAAAAAAAAAAAAAAAAAAAAAAC1puYAeG/TAHxz1CF5cNJJe3HQBnt1ygJ7c8wIgXy9AXt0zAd4c8oGdm7bAHp9qAAAAAAAAAAAAAAAAAAAAAAAioDaACckvAB4cNSQeW/V1X5z1CZ7cNV9em/Vsnpv1ZR4b9OyeW/UpH1x1SN8cNYArL9QAJOI2wB3a9YAf3LYL31v2YF+cdc5enDWtHlv1cR9cdeHe2/X6H1w2c57b9jzenDVmnlv1vN7b9aWhXfNA39z0gCEe9kAh3/YBHxw2Kp8btn/fG/Y1ntv1915cNXAe2/Y2Hpv1+98b9nwfG/Z+X1x14F4b9XRem/X73lw0kB4b9QAhnvcAI+N1wF9cNqLe27Z/npv1/95b9b/eHDT2Hhv1fJ6cNWxfG/Z1npv1/97cNe5eHHUl3hu1f93b9Ope3TMB7C74wB/ctsAgXTcD3pw15h5b9b8eG7V/3Zu0/x3btT+enDWx3pv1+t5b9b2enHTUHlx00l3b9T4d2/U1Hpy0BkAAAAAfXLWAIF02B98cNejeW/W+npv1/95b9b/eW/W8nlw1KZ8cdeTeW/W83lv1eB6b9fjeW/W/3lw1at+dtAKrafkAHdr1wB8cdd5e2/Y/3pv1v96b9f/em/X/Hlv1el5b9Tae3DX2Xpw1ux6b9f/enDX5Hxx2KB8c9YneG/WAKyn5AB6btcAe3HWTHlv1ud6cNbeeG/U+3pv1vR7cdaleG/U8npw1cx5b9bzeW/V9Xty1FaXiucCgXXaAMK95wAAAAAAfnbWAIR+1gJ7cdZZe3HVq3lw1KB7cNe0f3PZXXpv1uV5cNTKem/W5Xlv1OF5cdE3dnDTAIN1zAAAAAAAAAAAAAAAAACDd9wAmo3xAXty1kl6cNScenDVe31x1298cNjVfXDYwntv1/R5btX/eG/Uw3px0RR6cdEAAAAAAAAAAAAAAAAAAAAAAIF02gCBdNskem/W33lu1v97cNfRe2/X53xu2f58b9j6e2/Y/3pv1/94b9Ovf3nMBH52zQAAAAAAAAAAAAAAAAAAAAAAfHLWAH1z1zF4b9Tjd2/U4Hpx1Yp7cdeMe3DYpHlv1vF5b9X+eHDSgW5Z6QB8eMoAAAAAAAAAAAAAAAAAAAAAAH521gB/d9YEeXLUMnly1Cx+e9IEf3vUAn921wd9ctg/e3HWVnp00xJ5ctMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+AcAAPgDAADAAQAAgAEAAIAAAADAAAAAwAAAAMABAADAAwAAwAcAAOADAADwAwAA8AMAAPAHAADwBwAA//8AAA==
+// @Require         https://cdnjs.cloudflare.com/ajax/libs/arrive/2.4.1/arrive.min.js
+// @require         https://cdnjs.cloudflare.com/aja ... .1/crypto-js.min.js
+// @require         https://greasyfork.org/scripts/4 ... ode/GM_config_CN.js
+// @connect         keyfc.net
+// @connect         fuliba123.com
+// @grant           GM_info
+// @grant           GM_setClipboard
+// @grant           GM_getValue
+// @grant           GM_setValue
+// @grant           GM_registerMenuCommand
+// @grant           GM_xmlhttpRequest
+// @grant           GM_addStyle
+// @run-at          document-end
+// @early-start
+// @noframes
+// @license         GNU General Public License v3.0 or later
+// @supportURL      https://greasyfork.org/scripts/522004
+// @homepageURL     https://greasyfork.org/scripts/522004
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    const charMap = {
+        '赵': '0', '钱': '1', '孙': '2', '李': '3', '周': '4', '吴': '5', '郑': '6', '王': '7', '冯': '8', '陈': '9',
+        '褚': 'a', '卫': 'b', '蒋': 'c', '沈': 'd', '韩': 'e', '杨': 'f', '朱': 'g', '秦': 'h', '尤': 'i', '许': 'j',
+        '何': 'k', '吕': 'l', '施': 'm', '张': 'n', '孔': 'o', '曹': 'p', '严': 'q', '华': 'r', '金': 's', '魏': 't',
+        '陶': 'u', '姜': 'v', '戚': 'w', '谢': 'x', '邹': 'y', '喻': 'z',
+        '福': 'A', '水': 'B', '窦': 'C', '章': 'D', '云': 'E', '苏': 'F', '潘': 'G', '葛': 'H', '奚': 'I', '范': 'J',
+        '彭': 'K', '郎': 'L', '鲁': 'M', '韦': 'N', '昌': 'O', '马': 'P', '苗': 'Q', '凤': 'R', '花': 'S', '方': 'T',
+        '俞': 'U', '任': 'V', '袁': 'W', '柳': 'X', '唐': 'Y', '罗': 'Z',
+        '薛': '.', '伍': '-', '余': '_', '米': '+', '贝': '=', '姚': '/', '孟': '?', '顾': '#', '尹': '%', '江': '&', '钟': '*','竺': ':'
+    };
+
+    // 保留：只匹配 连续2个及以上 的字符，单个字符不转换（防乱码）
+    const baijiaxingChars = Object.keys(charMap).join('');
+    const regex = new RegExp(`[${baijiaxingChars}]{5,}`, 'g');
+
+    // 文本转换
+    function convertText(text) {
+        return text.replace(regex, (match) => {
+            let result = '';
+            for (const char of match) {
+                result += charMap[char] || char;
+            }
+            return result;
+        });
+    }
+
+    // 递归处理节点
+    function convertNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            if (regex.test(node.nodeValue)) {
+                node.nodeValue = convertText(node.nodeValue);
+            }
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+            const tagName = node.tagName.toLowerCase();
+            if (tagName !== 'script' && tagName !== 'style') {
+                for (const child of node.childNodes) {
+                    convertNode(child);
+                }
+            }
+        }
+    }
+
+    // 修复：监听全文档，动态加载的评论也能生效
+    function observeDOM() {
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const addedNode of mutation.addedNodes) {
+                    convertNode(addedNode);
+                }
+            }
+        });
+
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+    }
+
+    // 页面加载后执行
+    window.addEventListener('load', () => {
+        convertNode(document.body);
+        observeDOM();
+    });
+})();
