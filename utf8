@@ -1,0 +1,58 @@
+// ==UserScript==
+// @name         JSON 自动格式化 + UTF-8 修复
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  自动格式化JSON、中文不乱码
+// @author       You
+// @match        *://*/*
+// @grant        GM_addStyle
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 强制UTF-8编码
+    document.charset = 'utf-8';
+    document.documentElement.charset = 'utf-8';
+
+    function formatJSON(text) {
+        try {
+            return JSON.stringify(JSON.parse(text), null, 2);
+        } catch (e) {
+            return text;
+        }
+    }
+
+    function syntaxHighlight(json) {
+        json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return json.replace(
+            /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+            function (match) {
+                let cls = 'number';
+                if (/^"/.test(match)) {
+                    cls = /:$/.test(match) ? 'key' : 'string';
+                } else if (/true|false/.test(match)) {
+                    cls = 'boolean';
+                } else if (/null/.test(match)) {
+                    cls = 'null';
+                }
+                return '<span class="' + cls + '">' + match + '</span>';
+            }
+        );
+    }
+
+    GM_addStyle(`
+        pre { outline: 1px solid #ccc; padding: 10px; margin: 0; }
+        .string { color: green; }
+        .number { color: darkorange; }
+        .boolean { color: blue; }
+        .null { color: magenta; }
+        .key { color: red; }
+    `);
+
+    const pre = document.querySelector('pre');
+    if (pre) {
+        const formatted = formatJSON(pre.textContent);
+        pre.innerHTML = syntaxHighlight(formatted);
+    }
+})();
