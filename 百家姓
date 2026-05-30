@@ -1,29 +1,28 @@
 // ==UserScript==
-// @name         百家姓智能解密增强版
+// @name         百家姓智能解密增强版(性能优化)
 // @namespace    http://tampermonkey.net/
-// @version      0.6.0
-// @description  智能识别连续加密文本，≥10字符才解密，链接自动转超链接，40位字符识别为磁力链接
+// @version      0.7.0
+// @description  智能识别连续加密文本，≥10字符才解密，链接自动转超链接，40位字符识别为磁力链接 | 性能优化版，无卡顿
 // @author       豆包
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
-// @match        https://fuliba2023.net/*
+// @match        shturl.cc/ffeIXqUdDplkZ*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_unregisterMenuCommand
+// @run-at       document-idle
 // ==/UserScript==
-
 (function() {
     'use strict';
-
     // 配置项
     const defaultConfig = {
-        minLength: 10,               // 最小解密长度
-        autoDecrypt: true,          // 自动解密
-        showResult: true,           // 显示解密结果
-        minCipherRatio: 0.7,        // 最小密文比例（70%以上字符是密文才解密）
-        magnetLinkPrefix: 'magnet:?xt=urn:btih:',  // 磁力链接前缀
-        resultStyle: {              // 解密结果样式
+        minLength: 10,
+        autoDecrypt: true,
+        showResult: true,
+        minCipherRatio: 0.7,
+        magnetLinkPrefix: 'magnet:?xt=urn:btih:',
+        resultStyle: {
             background: '#f0f8ff',
             color: '#0066cc',
             padding: '4px 8px',
@@ -32,13 +31,12 @@
             fontSize: '14px',
             borderLeft: '3px solid #0066cc'
         },
-        linkStyle: {                // 链接样式
+        linkStyle: {
             color: '#0066cc',
             textDecoration: 'underline',
             fontWeight: 'bold'
         }
     };
-
     // 加载配置
     let config = { ...defaultConfig };
     try {
@@ -49,415 +47,262 @@
     } catch (e) {
         console.log('使用默认配置');
     }
-
     // 使用提供的精确映射表
     const nameMap = {
-        // 0-9 (10个)
         "赵":"0","钱":"1","孙":"2","李":"3","周":"4","吴":"5","郑":"6","王":"7","冯":"8","陈":"9",
-        // a-z (26个)
         "褚":"a","卫":"b","蒋":"c","沈":"d","韩":"e","杨":"f","朱":"g","秦":"h","尤":"i","许":"j",
         "何":"k","吕":"l","施":"m","张":"n","孔":"o","曹":"p","严":"q","华":"r","金":"s","魏":"t",
         "陶":"u","姜":"v","戚":"w","谢":"x","邹":"y","喻":"z",
-        // A-Z (26个)
         "福":"A","水":"B","窦":"C","章":"D","云":"E","苏":"F","潘":"G","葛":"H","奚":"I","范":"J",
         "彭":"K","郎":"L","鲁":"M","韦":"N","昌":"O","马":"P","苗":"Q","凤":"R","花":"S","方":"T",
         "俞":"U","任":"V","袁":"W","柳":"X","唐":"Y","罗":"Z",
-        // URL 特殊符号
-        "薛":".","伍":"-","余":"_","米":"+","贝":"=",        "姚":"/","孟":"?","顾":"#","尹":"%","江":"&","钟":"*","竺":":","赖":"|",
-        // ed2k 专用符号
+        "薛":".","伍":"-","余":"_","米":"+","贝":"=","姚":"/","孟":"?","顾":"#","尹":"%","江":"&","钟":"*","竺":":","赖":"|",
         "卜":"|"
     };
-
-    // 从映射表生成加密字符表
     const cipher = Object.keys(nameMap).join('');
-    
-    // 建立映射
     const cipherSet = new Set(cipher);
     const cipherMap = { ...nameMap };
     const reverseMap = {};
-    
-    // 建立反向映射
     for (let [cipherChar, plainChar] of Object.entries(nameMap)) {
         reverseMap[plainChar] = cipherChar;
     }
-
-    // 判断文本是否需要解密
     function shouldDecryptText(text) {
-        if (!text || text.length < config.minLength) {
-            return false;
-        }
-
-        // 计算密文字符比例
+        if (!text || text.length < config.minLength) return false;
         let cipherCount = 0;
         for (let ch of text) {
-            if (cipherSet.has(ch)) {
-                cipherCount++;
-            }
+            if (cipherSet.has(ch)) cipherCount++;
         }
-        
         const cipherRatio = cipherCount / text.length;
         return cipherRatio >= config.minCipherRatio;
     }
-
-    // 提取文本中的连续密文段
     function extractCipherSegments(text) {
         const segments = [];
         let currentSegment = '';
         let segmentStart = -1;
-        
         for (let i = 0; i < text.length; i++) {
             const ch = text[i];
-            
             if (cipherSet.has(ch)) {
-                // 是密文字符
-                if (currentSegment === '') {
-                    segmentStart = i;
-                }
+                if (currentSegment === '') segmentStart = i;
                 currentSegment += ch;
             } else {
-                // 不是密文字符，结束当前段
                 if (currentSegment !== '') {
-                    if (currentSegment.length >= config.minLength && 
-                        shouldDecryptText(currentSegment)) {
-                        segments.push({
-                            text: currentSegment,
-                            start: segmentStart,
-                            end: i
-                        });
+                    if (currentSegment.length >= config.minLength && shouldDecryptText(currentSegment)) {
+                        segments.push({ text: currentSegment, start: segmentStart, end: i });
                     }
                     currentSegment = '';
                     segmentStart = -1;
                 }
             }
         }
-        
-        // 处理末尾的密文段
-        if (currentSegment !== '' && currentSegment.length >= config.minLength && 
-            shouldDecryptText(currentSegment)) {
-            segments.push({
-                text: currentSegment,
-                start: segmentStart,
-                end: text.length
-            });
+        if (currentSegment !== '' && currentSegment.length >= config.minLength && shouldDecryptText(currentSegment)) {
+            segments.push({ text: currentSegment, start: segmentStart, end: text.length });
         }
-        
         return segments;
     }
-
-    // 解密单个字符串
     function decodeStr(s) {
         return s.split('').map(ch => cipherMap[ch] ?? ch).join('');
     }
-
-    // 加密函数（用于测试）
     function encodeStr(s) {
         return s.split('').map(ch => reverseMap[ch] ?? ch).join('');
     }
-
-    // 检查是否为磁力链接哈希
     function isMagnetHash(text) {
         const trimmed = text.trim();
-        
-        // 检查是否为40位字符（常见磁力链接哈希长度）
-        if (trimmed.length === 40) {
-            // 检查是否只包含十六进制字符（0-9, a-f, A-F）
-            return /^[0-9a-fA-F]{40}$/.test(trimmed);
-        }
-        return false;
+        return trimmed.length === 40 && /^[0-9a-fA-F]{40}$/.test(trimmed);
     }
-
-    // URL检测
     function isUrl(text) {
         const trimmed = text.trim();
         return /^(https?:\/\/|www\.)/.test(trimmed);
     }
-
-    // 数据URL检测
     function isDataUrl(text) {
         return text.trim().startsWith('data:');
     }
-
-    // 磁力链接检测
     function isMagnetLink(text) {
-        const trimmed = text.trim();
-        return trimmed.startsWith('magnet:?xt=urn:btih:');
+        return text.trim().startsWith('magnet:?xt=urn:btih:');
     }
-
-    // 处理解密后的文本，如果是40位字符则添加磁力链接前缀
     function processDecryptedText(text) {
         const trimmed = text.trim();
-        
-        if (isMagnetHash(trimmed)) {
-            // 如果是40位哈希，转换为磁力链接
-            return config.magnetLinkPrefix + trimmed;
-        } else if (isMagnetLink(trimmed)) {
-            // 已经是磁力链接，直接返回
-            return trimmed;
-        } else if (isUrl(trimmed) || isDataUrl(trimmed)) {
-            // 普通URL或数据URL
-            return trimmed;
-        } else {
-            // 其他文本
-            return text;
-        }
+        if (isMagnetHash(trimmed)) return config.magnetLinkPrefix + trimmed;
+        if (isMagnetLink(trimmed) || isUrl(trimmed) || isDataUrl(trimmed)) return trimmed;
+        return text;
     }
-
-    // 创建解密结果元素
     function createDecryptedElement(originalText) {
         const processedText = processDecryptedText(originalText);
         const isMagnet = isMagnetHash(originalText.trim()) || isMagnetLink(processedText);
         const isUrlText = isUrl(processedText) || isDataUrl(processedText) || isMagnet;
-        
         const div = document.createElement('div');
         Object.assign(div.style, config.resultStyle);
         div.className = 'bjm-decrypt-result';
         div.setAttribute('data-bjm-processed', 'true');
-
         if (isUrlText) {
             const a = document.createElement('a');
-            
-            if (isMagnet) {
-                // 磁力链接特殊处理
-                a.href = processedText;
-                a.title = '磁力链接';
-                a.innerHTML = '🧲 磁力链接：<span class="decrypted-magnet">' + 
-                    (originalText.length > 40 ? originalText : processedText) + '</span>';
-            } else {
-                a.href = processedText;
-                a.innerHTML = '🔓 解密链接：<span class="decrypted-url">' + processedText + '</span>';
-            }
-            
+            a.href = processedText;
             a.target = '_blank';
             a.rel = 'noopener noreferrer';
             Object.assign(a.style, config.linkStyle);
-            a.onclick = (e) => e.stopPropagation();
-            div.appendChild(a);
-
-            // 添加磁力链接图标
+            a.onclick = e => e.stopPropagation();
             if (isMagnet) {
-                const magnetIcon = document.createElement('span');
-                magnetIcon.innerHTML = ' 🧲';
-                magnetIcon.title = '磁力链接';
-                a.prepend(magnetIcon);
+                a.title = '磁力链接';
+                a.innerHTML = '🧲 磁力链接：<span class="decrypted-magnet">' + (originalText.length > 40 ? originalText : processedText) + '</span>';
+            } else {
+                a.innerHTML = '🔓 解密链接：<span class="decrypted-url">' + processedText + '</span>';
             }
-
+            div.appendChild(a);
         } else {
-            // 普通文本
             div.innerHTML = '🔓 解密结果：<span class="decrypted-text">' + processedText + '</span>';
         }
-
-        // 添加复制按钮
         const copyBtn = document.createElement('button');
         copyBtn.innerHTML = '📋';
         copyBtn.title = '复制内容';
         copyBtn.style.cssText = 'margin-left:8px;padding:2px 6px;border:1px solid #ccc;background:#fff;border-radius:3px;cursor:pointer;font-size:12px;';
-        copyBtn.onclick = (e) => {
+        copyBtn.onclick = e => {
             e.stopPropagation();
-            const textToCopy = isMagnet ? processedText : processedText;
-            navigator.clipboard.writeText(textToCopy).then(() => {
+            navigator.clipboard.writeText(processedText).then(() => {
                 copyBtn.innerHTML = '✅';
                 setTimeout(() => copyBtn.innerHTML = '📋', 1000);
             });
         };
         div.appendChild(copyBtn);
-
-        // 如果是磁力链接，添加额外的哈希显示
         if (isMagnetHash(originalText.trim())) {
             const hashDiv = document.createElement('div');
             hashDiv.style.cssText = 'margin-top:4px;padding:2px 4px;background:#fff8dc;border:1px dashed #ffcc00;border-radius:3px;font-family:monospace;font-size:12px;word-break:break-all;';
             hashDiv.innerHTML = `<span style="color:#666;">哈希值:</span> ${originalText.trim()}`;
             div.appendChild(hashDiv);
         }
-
         return div;
     }
-
-    // 处理文本节点
     function processTextNode(node) {
         const originalText = node.textContent;
-        if (!originalText || originalText.trim().length === 0) {
-            return false;
-        }
-
-        // 检查是否已经被处理过
-        if (node._bjm_processed) {
-            return false;
-        }
-
-        // 查找连续密文段
+        if (!originalText || originalText.trim().length === 0 || node._bjm_processed) return false;
         const segments = extractCipherSegments(originalText);
-        if (segments.length === 0) {
-            node._bjm_processed = true;
-            return false;
-        }
-
+        if (segments.length === 0) { node._bjm_processed = true; return false; }
         const parent = node.parentElement;
-        if (!parent || !config.showResult) {
-            node._bjm_processed = true;
-            return false;
-        }
-
-        // 标记节点已处理
+        if (!parent || !config.showResult) { node._bjm_processed = true; return false; }
         node._bjm_processed = true;
-        
-        // 对每个密文段进行处理
         let lastIndex = 0;
         const fragment = document.createDocumentFragment();
         let hasDecryption = false;
-
-        for (const segment of segments) {
-            // 添加前导普通文本
-            if (segment.start > lastIndex) {
-                const textBefore = originalText.substring(lastIndex, segment.start);
-                fragment.appendChild(document.createTextNode(textBefore));
+        for (const seg of segments) {
+            if (seg.start > lastIndex) {
+                fragment.appendChild(document.createTextNode(originalText.substring(lastIndex, seg.start)));
             }
-
-            // 添加原密文
-            const cipherSpan = document.createElement('span');
-            cipherSpan.textContent = segment.text;
-            cipherSpan.style.color = '#888';
-            cipherSpan.className = 'bjm-cipher-text';
-            cipherSpan.setAttribute('data-bjm-processed', 'true');
-            fragment.appendChild(cipherSpan);
-
-            // 添加解密结果
-            const decrypted = decodeStr(segment.text);
-            if (decrypted !== segment.text) {
-                const resultElement = createDecryptedElement(decrypted);
-                fragment.appendChild(resultElement);
+            const span = document.createElement('span');
+            span.textContent = seg.text;
+            span.style.color = '#888';
+            span.className = 'bjm-cipher-text';
+            span.setAttribute('data-bjm-processed', 'true');
+            fragment.appendChild(span);
+            const dec = decodeStr(seg.text);
+            if (dec !== seg.text) {
+                fragment.appendChild(createDecryptedElement(dec));
                 hasDecryption = true;
             }
-
-            lastIndex = segment.end;
+            lastIndex = seg.end;
         }
-
-        // 添加剩余文本
         if (lastIndex < originalText.length) {
             fragment.appendChild(document.createTextNode(originalText.substring(lastIndex)));
         }
-
-        // 如果有解密内容，替换原节点
         if (hasDecryption) {
-            // 将整个父元素标记为已处理
             parent.setAttribute('data-bjm-processed', 'true');
             parent.classList.add('bjm-processed');
-            
-            try {
-                parent.replaceChild(fragment, node);
-            } catch (e) {
-                console.warn('替换节点失败，可能已被其他脚本修改');
-            }
+            queueMicrotask(() => {
+                try { parent.replaceChild(fragment, node); } catch {}
+            });
             return true;
         }
-        
         return false;
     }
 
-    // 主解密函数
+    // ========== 核心优化：分批处理文本节点，防止阻塞主线程 ==========
+    const BATCH_SIZE = 30;
+    const BATCH_DELAY = 8;
     function decodePage() {
         if (!config.autoDecrypt) return;
-
-        const walker = document.createTreeWalker(
-            document.body,
-            NodeFilter.SHOW_TEXT,
-            {
-                acceptNode: function(node) {
-                    // 跳过已处理的节点
-                    if (node._bjm_processed || 
-                        node.parentElement?.hasAttribute('data-bjm-processed') ||
-                        node.parentElement?.classList?.contains('bjm-processed')) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-                    // 跳过脚本、样式等元素
-                    if (node.parentElement?.tagName?.match(/^(SCRIPT|STYLE|TEXTAREA|INPUT|BUTTON)/i)) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-                    // 跳过太短的文本
-                    if (!node.textContent || node.textContent.trim().length < config.minLength) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-                    return NodeFilter.FILTER_ACCEPT;
-                }
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+            acceptNode(node) {
+                if (node._bjm_processed) return NodeFilter.FILTER_REJECT;
+                const p = node.parentElement;
+                if (!p || p.hasAttribute('data-bjm-processed') || p.classList.contains('bjm-processed')) return NodeFilter.FILTER_REJECT;
+                if (p.tagName?.match(/^(SCRIPT|STYLE|TEXTAREA|INPUT|BUTTON)/i)) return NodeFilter.FILTER_REJECT;
+                if (!node.textContent || node.textContent.trim().length < config.minLength) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
             }
-        );
-
-        const textNodes = [];
-        let node;
-        while (node = walker.nextNode()) {
-            textNodes.push(node);
-        }
-
-        // 批量处理，避免频繁DOM操作
-        let processedCount = 0;
-        for (const node of textNodes) {
-            try {
-                if (processTextNode(node)) {
-                    processedCount++;
-                }
-            } catch (e) {
-                console.error('处理文本节点失败:', e);
-                // 标记为已处理，避免重复尝试
-                node._bjm_processed = true;
+        });
+        const nodes = [];
+        let n;
+        while (n = walker.nextNode()) nodes.push(n);
+        if (nodes.length === 0) return;
+        // 分批执行
+        let index = 0;
+        function processBatch() {
+            const end = Math.min(index + BATCH_SIZE, nodes.length);
+            let count = 0;
+            for (; index < end; index++) {
+                try { if (processTextNode(nodes[index])) count++; } catch {}
+            }
+            if (index < nodes.length) {
+                setTimeout(processBatch, BATCH_DELAY);
             }
         }
-        
-        if (processedCount > 0) {
-            console.log(`百家姓解密: 处理了 ${processedCount} 个文本节点`);
-        }
+        processBatch();
     }
 
-    // 设置菜单
     function setupMenu() {
-        // 创建菜单面板
         const menu = document.createElement('div');
         menu.id = 'bjm-menu';
-        menu.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: white;
-            border: 2px solid #0066cc;
-            border-radius: 8px;
-            padding: 15px;
-            z-index: 10000;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            min-width: 320px;
-            max-width: 400px;
-            display: none;
-        `;
-
-        // 标题
+        menu.style.cssText = `position:fixed;top:20px;right:20px;background:#fff;border:2px solid #0066cc;border-radius:8px;padding:15px;z-index:10000;box-shadow:0 4px 12px rgba(0,0,0,.2);min-width:320px;max-width:400px;display:none;`;
         const title = document.createElement('h3');
-        title.textContent = '百家姓解密设置 v0.5.0';
+        title.textContent = '百家姓解密设置 v0.7.0';
         title.style.margin = '0 0 15px 0';
         title.style.color = '#0066cc';
         menu.appendChild(title);
-
-        // 映射表信息
         const mapInfo = document.createElement('div');
         mapInfo.style.cssText = 'margin-bottom:15px;padding:8px;background:#f8f9fa;border-radius:4px;font-size:12px;color:#666;';
         mapInfo.innerHTML = '📊 当前映射表: 支持72个百家姓字符<br>🔢 数字(10) 小写字母(26) 大写字母(26) 特殊符号(10)';
         menu.appendChild(mapInfo);
-
-        // 自动解密开关
-        const autoToggle = createToggle('自动解密', 'autoDecrypt', config.autoDecrypt, (value) => {
-            config.autoDecrypt = value;
-            if (value) decodePage();
+        function createToggle(label, key, value, onChange) {
+            const div = document.createElement('div');
+            div.style.display = 'flex';
+            div.style.justifyContent = 'space-between';
+            div.style.alignItems = 'center';
+            div.style.margin = '8px 0';
+            const labelSpan = document.createElement('span');
+            labelSpan.textContent = label;
+            const switchLabel = document.createElement('label');
+            switchLabel.style.cssText = 'position:relative;display:inline-block;width:50px;height:24px;';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = value;
+            checkbox.style.opacity = 0;
+            const slider = document.createElement('span');
+            slider.style.cssText = `position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:${value?'#0066cc':'#ccc'};transition:.4s;border-radius:24px;`;
+            const circle = document.createElement('span');
+            circle.style.cssText = `position:absolute;content:"";height:16px;width:16px;left:${value?'28px':'4px'};bottom:4px;background:#fff;transition:.4s;border-radius:50%;`;
+            checkbox.onchange = () => {
+                const v = checkbox.checked;
+                slider.style.backgroundColor = v ? '#0066cc' : '#ccc';
+                circle.style.left = v ? '28px' : '4px';
+                onChange(v);
+            };
+            switchLabel.appendChild(checkbox);
+            switchLabel.appendChild(slider);
+            slider.appendChild(circle);
+            div.appendChild(labelSpan);
+            div.appendChild(switchLabel);
+            return div;
+        }
+        const autoToggle = createToggle('自动解密', 'autoDecrypt', config.autoDecrypt, v => {
+            config.autoDecrypt = v;
+            if (v) decodePage();
         });
         menu.appendChild(autoToggle);
-
-        // 显示结果开关
-        const showToggle = createToggle('显示结果', 'showResult', config.showResult, (value) => {
-            config.showResult = value;
+        const showToggle = createToggle('显示结果', 'showResult', config.showResult, v => {
+            config.showResult = v;
         });
         menu.appendChild(showToggle);
-
-        // 最小长度设置
         const lengthDiv = document.createElement('div');
         lengthDiv.style.margin = '10px 0';
         const lengthLabel = document.createElement('label');
         lengthLabel.textContent = '最小解密长度: ';
-        lengthLabel.style.marginRight = '10px';
         const lengthInput = document.createElement('input');
         lengthInput.type = 'number';
         lengthInput.min = 1;
@@ -470,13 +315,10 @@
         lengthDiv.appendChild(lengthLabel);
         lengthDiv.appendChild(lengthInput);
         menu.appendChild(lengthDiv);
-
-        // 密文比例设置
         const ratioDiv = document.createElement('div');
         ratioDiv.style.margin = '10px 0';
         const ratioLabel = document.createElement('label');
         ratioLabel.textContent = '最小密文比例: ';
-        ratioLabel.style.marginRight = '10px';
         const ratioInput = document.createElement('input');
         ratioInput.type = 'number';
         ratioInput.min = 0.1;
@@ -484,21 +326,19 @@
         ratioInput.step = 0.1;
         ratioInput.value = config.minCipherRatio;
         ratioInput.style.width = '60px';
+        const ratioPercent = document.createElement('span');
+        ratioPercent.textContent = ' (' + Math.round(config.minCipherRatio*100) + '%)';
+        ratioInput.oninput = () => {
+            const v = parseFloat(ratioInput.value) || 0.7;
+            ratioPercent.textContent = ' (' + Math.round(v*100) + '%)';
+        };
         ratioInput.onchange = () => {
             config.minCipherRatio = parseFloat(ratioInput.value) || 0.7;
-        };
-        const ratioPercent = document.createElement('span');
-        ratioPercent.textContent = ' (' + (config.minCipherRatio * 100) + '%)';
-        ratioInput.oninput = () => {
-            const value = parseFloat(ratioInput.value) || 0.7;
-            ratioPercent.textContent = ' (' + Math.round(value * 100) + '%)';
         };
         ratioDiv.appendChild(ratioLabel);
         ratioDiv.appendChild(ratioInput);
         ratioDiv.appendChild(ratioPercent);
         menu.appendChild(ratioDiv);
-
-        // 磁力链接设置
         const magnetDiv = document.createElement('div');
         magnetDiv.style.margin = '10px 0';
         magnetDiv.style.padding = '10px';
@@ -508,30 +348,24 @@
         magnetLabel.innerHTML = '<strong>🔗 磁力链接设置</strong>';
         magnetLabel.style.display = 'block';
         magnetLabel.style.marginBottom = '8px';
-        const magnetPrefixLabel = document.createElement('label');
-        magnetPrefixLabel.textContent = '前缀: ';
-        magnetPrefixLabel.style.marginRight = '5px';
         const magnetPrefixInput = document.createElement('input');
         magnetPrefixInput.type = 'text';
         magnetPrefixInput.value = config.magnetLinkPrefix;
         magnetPrefixInput.style.width = '200px';
         magnetPrefixInput.style.padding = '3px 5px';
-        magnetPrefixInput.style.marginRight = '5px';
         magnetPrefixInput.onchange = () => {
             config.magnetLinkPrefix = magnetPrefixInput.value || 'magnet:?xt=urn:btih:';
         };
-        magnetDiv.appendChild(magnetLabel);
-        magnetDiv.appendChild(magnetPrefixLabel);
-        magnetDiv.appendChild(magnetPrefixInput);
         const magnetInfo = document.createElement('div');
         magnetInfo.style.marginTop = '5px';
         magnetInfo.style.fontSize = '12px';
         magnetInfo.style.color = '#666';
         magnetInfo.textContent = '40位十六进制字符将自动转为磁力链接';
+        magnetDiv.appendChild(magnetLabel);
+        magnetDiv.appendChild(document.createTextNode('前缀: '));
+        magnetDiv.appendChild(magnetPrefixInput);
         magnetDiv.appendChild(magnetInfo);
         menu.appendChild(magnetDiv);
-
-        // 解密测试区域
         const testDiv = document.createElement('div');
         testDiv.style.margin = '15px 0';
         testDiv.style.padding = '10px';
@@ -553,276 +387,102 @@
         testResult.style.fontSize = '12px';
         testResult.style.wordBreak = 'break-all';
         testInput.oninput = () => {
-            const result = decodeStr(testInput.value);
-            const cipherCount = [...testInput.value].filter(ch => cipherSet.has(ch)).length;
-            const ratio = testInput.value.length > 0 ? cipherCount / testInput.value.length : 0;
-            const isMagnet = isMagnetHash(result);
-            const finalResult = isMagnet ? (config.magnetLinkPrefix + result) : result;
-            
-            let resultHtml = `<strong>解密结果:</strong> ${finalResult}<br>`;
-            resultHtml += `<strong>密文识别:</strong> ${cipherCount}/${testInput.value.length} 字符 (${Math.round(ratio * 100)}%)<br>`;
-            
-            if (isMagnet) {
-                resultHtml += `<span style="color:#ff6600;">🔍 识别为磁力链接哈希，已添加前缀</span><br>`;
-            }
-            
-            // 显示每个字符的映射
-            if (testInput.value.length > 0) {
-                resultHtml += `<div style="margin-top:5px;padding:5px;background:#fff;border:1px solid #eee;border-radius:3px;">`;
-                resultHtml += `<strong>字符映射:</strong><br>`;
-                const chars = testInput.value.split('');
-                for (let i = 0; i < Math.min(chars.length, 20); i++) {
-                    const ch = chars[i];
-                    const plainChar = cipherMap[ch] || ch;
-                    resultHtml += `${ch} → ${plainChar === ' ' ? '[空格]' : plainChar}${i < chars.length - 1 ? ', ' : ''}`;
-                }
-                if (chars.length > 20) {
-                    resultHtml += `... 等 ${chars.length} 个字符`;
-                }
-                resultHtml += `</div>`;
-            }
-            
-            testResult.innerHTML = resultHtml;
+            const r = decodeStr(testInput.value);
+            const cnt = [...testInput.value].filter(c => cipherSet.has(c)).length;
+            const ratio = testInput.value.length ? cnt/testInput.value.length : 0;
+            const isMag = isMagnetHash(r);
+            const final = isMag ? config.magnetLinkPrefix + r : r;
+            let html = `<strong>结果:</strong> ${final}<br><strong>密文:</strong> ${cnt}/${testInput.value.length} (${Math.round(ratio*100)}%)`;
+            if (isMag) html += `<br><span style="color:#f60;">🔍 自动转为磁力链接</span>`;
+            testResult.innerHTML = html;
         };
         testDiv.appendChild(testLabel);
         testDiv.appendChild(testInput);
         testDiv.appendChild(testResult);
         menu.appendChild(testDiv);
-
-        // 按钮区域
         const btnDiv = document.createElement('div');
         btnDiv.style.display = 'flex';
         btnDiv.style.gap = '10px';
         btnDiv.style.marginTop = '15px';
-
         const saveBtn = document.createElement('button');
         saveBtn.textContent = '保存设置';
-        saveBtn.style.cssText = 'padding:6px 12px;background:#0066cc;color:white;border:none;border-radius:4px;cursor:pointer;flex:1;';
+        saveBtn.style.cssText = 'padding:6px 12px;background:#0066cc;color:#fff;border:none;border-radius:4px;cursor:pointer;flex:1;';
         saveBtn.onclick = () => {
             GM_setValue('config', config);
             menu.style.display = 'none';
-            alert('设置已保存！');
+            alert('保存成功');
         };
-
         const closeBtn = document.createElement('button');
         closeBtn.textContent = '关闭';
         closeBtn.style.cssText = 'padding:6px 12px;background:#ccc;color:#333;border:none;border-radius:4px;cursor:pointer;flex:1;';
-        closeBtn.onclick = () => {
-            menu.style.display = 'none';
-        };
-
+        closeBtn.onclick = () => menu.style.display = 'none';
         const decryptNowBtn = document.createElement('button');
         decryptNowBtn.textContent = '立即解密';
-        decryptNowBtn.style.cssText = 'padding:6px 12px;background:#28a745;color:white;border:none;border-radius:4px;cursor:pointer;flex:1;';
+        decryptNowBtn.style.cssText = 'padding:6px 12px;background:#28a745;color:#fff;border:none;border-radius:4px;cursor:pointer;flex:1;';
         decryptNowBtn.onclick = () => {
             decodePage();
             menu.style.display = 'none';
         };
-
         const testBtn = document.createElement('button');
         testBtn.textContent = '加密测试';
-        testBtn.style.cssText = 'padding:6px 12px;background:#ff6600;color:white;border:none;border-radius:4px;cursor:pointer;flex:1;';
+        testBtn.style.cssText = 'padding:6px 12px;background:#ff6600;color:#fff;border:none;border-radius:4px;cursor:pointer;flex:1;';
         testBtn.onclick = () => {
-            const testText = prompt('请输入要加密的文本（支持数字、字母、:?&=.-_% | 等字符）:');
-            if (testText) {
-                const encrypted = encodeStr(testText);
-                alert(`加密结果:\n${encrypted}\n\n字符数: ${encrypted.length}`);
-            }
+            const t = prompt('输入要加密的文本:');
+            if (t) alert('加密结果:\n' + encodeStr(t));
         };
-
         btnDiv.appendChild(saveBtn);
         btnDiv.appendChild(decryptNowBtn);
         btnDiv.appendChild(testBtn);
         btnDiv.appendChild(closeBtn);
         menu.appendChild(btnDiv);
-
         document.body.appendChild(menu);
-
-        // 创建开关控制按钮
         const toggleBtn = document.createElement('button');
-        toggleBtn.id = 'bjm-toggle-btn';
         toggleBtn.innerHTML = '🔧';
         toggleBtn.title = '百家姓解密设置';
-        toggleBtn.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            width: 40px;
-            height: 40px;
-            background: #0066cc;
-            color: white;
-            border: none;
-            border-radius: 50%;
-            font-size: 20px;
-            cursor: pointer;
-            z-index: 9999;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        `;
-        toggleBtn.onclick = (e) => {
+        toggleBtn.style.cssText = `position:fixed;top:20px;right:20px;width:40px;height:40px;background:#0066cc;color:#fff;border:none;border-radius:50%;font-size:20px;cursor:pointer;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.3);`;
+        toggleBtn.onclick = e => {
             e.stopPropagation();
             menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
         };
         document.body.appendChild(toggleBtn);
-
-        // 点击外部关闭菜单
-        document.addEventListener('click', (e) => {
-            if (!menu.contains(e.target) && e.target !== toggleBtn) {
-                menu.style.display = 'none';
-            }
+        document.addEventListener('click', e => {
+            if (!menu.contains(e.target) && e.target !== toggleBtn) menu.style.display = 'none';
         });
     }
-
-    // 创建开关控件
-    function createToggle(label, key, value, onChange) {
-        const div = document.createElement('div');
-        div.style.display = 'flex';
-        div.style.justifyContent = 'space-between';
-        div.style.alignItems = 'center';
-        div.style.margin = '8px 0';
-
-        const labelSpan = document.createElement('span');
-        labelSpan.textContent = label;
-
-        const switchLabel = document.createElement('label');
-        switchLabel.style.cssText = 'position:relative;display:inline-block;width:50px;height:24px;';
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = value;
-        checkbox.style.cssText = 'opacity:0;width:0;height:0;';
-
-        const slider = document.createElement('span');
-        slider.style.cssText = `
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: ${value ? '#0066cc' : '#ccc'};
-            transition: .4s;
-            border-radius: 24px;
-        `;
-
-        const circle = document.createElement('span');
-        circle.style.cssText = `
-            position: absolute;
-            content: "";
-            height: 16px;
-            width: 16px;
-            left: ${value ? '28px' : '4px'};
-            bottom: 4px;
-            background-color: white;
-            transition: .4s;
-            border-radius: 50%;
-        `;
-
-        checkbox.onchange = () => {
-            const newValue = checkbox.checked;
-            slider.style.backgroundColor = newValue ? '#0066cc' : '#ccc';
-            circle.style.left = newValue ? '28px' : '4px';
-            onChange(newValue);
-        };
-
-        switchLabel.appendChild(checkbox);
-        switchLabel.appendChild(slider);
-        slider.appendChild(circle);
-
-        div.appendChild(labelSpan);
-        div.appendChild(switchLabel);
-        return div;
-    }
-
-    // 清理处理标记
     function clearProcessingMarks() {
-        // 清理所有处理标记
-        document.querySelectorAll('[data-bjm-processed]').forEach(el => {
-            el.removeAttribute('data-bjm-processed');
-        });
-        document.querySelectorAll('.bjm-processed').forEach(el => {
-            el.classList.remove('bjm-processed');
-        });
-        
-        // 清理文本节点的标记
-        const walker = document.createTreeWalker(
-            document.body,
-            NodeFilter.SHOW_TEXT,
-            null,
-            false
-        );
-        let node;
-        while (node = walker.nextNode()) {
-            if (node._bjm_processed) {
-                delete node._bjm_processed;
-            }
-        }
+        document.querySelectorAll('[data-bjm-processed]').forEach(el => el.removeAttribute('data-bjm-processed'));
+        document.querySelectorAll('.bjm-processed').forEach(el => el.classList.remove('bjm-processed'));
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let n;
+        while (n = walker.nextNode()) delete n._bjm_processed;
     }
-
-    // 初始化
-    let isInitialized = false;
-    window.addEventListener('load', () => {
-        if (isInitialized) return;
-        isInitialized = true;
-        
-        setTimeout(() => {
-            console.log('百家姓解密脚本 v0.5.0 初始化...');
-            console.log('支持字符: 数字0-9, 字母a-z A-Z, 特殊符号: :?&=.-_% |');
+    // ========== 优化：延迟初始化 + 异步执行 ==========
+    let inited = false;
+    function init() {
+        if (inited) return;
+        inited = true;
+        queueMicrotask(() => {
             decodePage();
             setupMenu();
-        }, 1000);
-    });
-
-    // 监听DOM变化
-    const observer = new MutationObserver((mutations) => {
+        });
+    }
+    // DOM就绪后再启动，不阻塞渲染
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
+        setTimeout(init, 300);
+    } else {
+        document.addEventListener('DOMContentLoaded', () => setTimeout(init, 300));
+    }
+    // ========== 优化：防抖监听DOM变化 ==========
+    const observer = new MutationObserver(() => {
         if (!config.autoDecrypt) return;
-        
-        let shouldDecode = false;
-        for (const mutation of mutations) {
-            if (mutation.type === 'childList') {
-                for (const node of mutation.addedNodes) {
-                    // 只处理新增的元素节点
-                    if (node.nodeType === Node.ELEMENT_NODE) {
-                        // 检查是否已经被处理过
-                        if (!node.hasAttribute('data-bjm-processed') && 
-                            !node.classList.contains('bjm-processed')) {
-                            shouldDecode = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if (shouldDecode) break;
-        }
-        
-        if (shouldDecode) {
-            // 防抖处理
-            clearTimeout(window._bjmDecodeTimer);
-            window._bjmDecodeTimer = setTimeout(decodePage, 300);
-        }
+        clearTimeout(window._bjmDecodeTimer);
+        window._bjmDecodeTimer = setTimeout(() => decodePage(), 200);
     });
-
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
-
-    // 导出到全局，方便调试
+    observer.observe(document.body, { childList: true, subtree: true });
     window.BJM = {
-        decode: decodeStr,
-        encode: encodeStr,
-        config: config,
-        decodePage: decodePage,
-        shouldDecryptText: shouldDecryptText,
-        extractCipherSegments: extractCipherSegments,
-        clearProcessingMarks: clearProcessingMarks,
-        isMagnetHash: isMagnetHash,
-        processDecryptedText: processDecryptedText,
-        cipherMap: cipherMap,
-        reverseMap: reverseMap
+        decode: decodeStr, encode: encodeStr, config, decodePage,
+        shouldDecryptText, extractCipherSegments, clearProcessingMarks,
+        isMagnetHash, processDecryptedText, cipherMap, reverseMap
     };
-
-    console.log('百家姓解密脚本 v0.5.0 已加载！');
-    console.log('使用方法: 页面右上角点击🔧按钮打开设置面板');
-    console.log('全局对象: window.BJM 包含所有解密功能');
-
+    console.log('✅ 百家姓解密(性能优化版) 已加载');
 })();
