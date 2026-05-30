@@ -1,0 +1,261 @@
+// ==UserScript==
+// @name         百家姓/磁力/MD5 终极稳定版-流畅优化
+// @namespace    http://tampermonkey.net/
+// @description  @肥羊 流畅优化版
+// @version      4.2.1
+// @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
+// @match        https://www.wnflb2023.com/thread*
+// @match        https://fuliba2023.net/*
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setClipboard
+// @connect      whatslink.info
+// @downloadURL https://update.greasyfork.org/scripts/567514/%E7%99%BE%E5%AE%B6%E5%A7%93%E7%A3%81%E5%8A%9BMD5%20%E7%BB%88%E6%9E%81%E7%A8%B3%E5%AE%9A%E7%89%88.user.js
+// @updateURL https://update.greasyfork.org/scripts/567514/%E7%99%BE%E5%AE%B6%E5%A7%93%E7%A3%81%E5%8A%9BMD5%20%E7%BB%88%E6%9E%81%E7%A8%B3%E5%AE%9A%E7%89%88.meta.js
+// ==/UserScript==
+(function () {
+    'use strict';
+    let m1Name="主动识别"
+    let m2Name="鼠标拖选"
+    let M1Enabled = GM_getValue(m1Name, true);
+    let M2Enabled = GM_getValue(m2Name, true);
+
+    let m1Id = GM_registerMenuCommand(
+        `${m1Name} (当前: ${M1Enabled ? '开' : '关'})刷新页面生效`,
+        function () {
+            M1Enabled = !M1Enabled;
+            GM_setValue(m1Name, M1Enabled);
+            GM_unregisterMenuCommand(m1Id);
+            m1Id = GM_registerMenuCommand(
+                `${m1Name}  (当前: ${M1Enabled ? '开' : '关'})刷新页面生效`,
+                arguments.callee
+            );
+        }
+    );
+
+    let m2Id = GM_registerMenuCommand(
+        `${m2Name} (当前: ${M2Enabled ? '开' : '关'})`,
+        function () {
+            M2Enabled = !M2Enabled;
+            GM_setValue(m2Name, M2Enabled);
+            GM_unregisterMenuCommand(m2Id);
+            m2Id = GM_registerMenuCommand(
+                `${m2Name}  (当前: ${M2Enabled ? '开' : '关'})`,
+                arguments.callee
+            );
+        }
+    );
+
+    const bjxMap = {
+        "赵":"0","钱":"1","孙":"2","李":"3","周":"4","吴":"5","郑":"6","王":"7","冯":"8","陈":"9",
+        "褚":"a","卫":"b","蒋":"c","沈":"d","韩":"e","杨":"f","朱":"g","秦":"h","尤":"i","许":"j",
+        "何":"k","吕":"l","施":"m","张":"n","孔":"o","曹":"p","严":"q","华":"r","金":"s","魏":"t",
+        "陶":"u","姜":"v","戚":"w","谢":"x","邹":"y","喻":"z","福":"A","水":"B","窦":"C","章":"D",
+        "云":"E","苏":"F","潘":"G","葛":"H","奚":"I","范":"J","彭":"K","郎":"L","鲁":"M","韦":"N",
+        "昌":"O","马":"P","苗":"Q","凤":"R","花":"S","方":"T","俞":"U","任":"V","袁":"W","柳":"X",
+        "唐":"Y","罗":"Z","薛":".","伍":"-","余":"_","米":"+","贝":"=","姚":"/","孟":"?","顾":"#",
+        "尹":"%","江":"&","钟":"*","竺":":","赖":"|"
+    };
+    const bjxChars = Object.keys(bjxMap).join("");
+    const bjxRegex = new RegExp(`[${bjxChars}]{10,80}`, "g");
+    const magnetRegex = /magnet:\?xt=urn:btih:[a-zA-Z0-9]{32,40}/g;
+    const hashRegex = /\b[a-fA-F0-9]{32,40}\b/g;
+    const urlReg = /^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([/\w .-]*)*\/?(\?[^\s#]*)?(#[^\s]*)?$/g;
+    const cache = new Map();
+
+    function debounce(func, wait){let timer;return (...args)=>{clearTimeout(timer);timer=setTimeout(()=>func.apply(this,args),wait)}}
+
+    function decodeBJX(t) {
+        t = t.replace(/\s+/g, "");
+        let r = "";
+        for (let c of t) { if (bjxMap[c]!==undefined) r += bjxMap[c] }
+        return r;
+    }
+
+    function buildMagnet(h) {
+        let matchURL=[...h.matchAll(urlReg)][0];
+        if (matchURL!=undefined && !matchURL.includes("http")) return h;
+        return `magnet:?xt=urn:btih:${h}`;
+    }
+
+    function formatSize(b) {
+        if (!b) return "未知";
+        const u = ["B","KB","MB","GB","TB"];
+        let i=0;
+        while(b>=1024&&i<u.length-1){b/=1024;i++}
+        return b.toFixed(2)+" "+u[i];
+    }
+
+    function makeDraggable(el, handle) {
+        let d=false,ox,oy;
+        handle.onmousedown=e=>{d=true;ox=e.clientX-el.offsetLeft;oy=e.clientY-el.offsetTop};
+        document.onmousemove=e=>{if(!d)return;el.style.left=e.clientX-ox+"px";el.style.top=e.clientY-oy+"px"};
+        document.onmouseup=()=>d=false;
+    }
+
+    // 核心优化：先显示窗口，再异步填充内容
+    function createModal(title, html) {
+        const modal=document.createElement("div");
+        modal.style="position:fixed;top:120px;left:200px;width:620px;max-height:80vh;overflow:hidden;background:#fff;border-radius:12px;box-shadow:0 15px 40px rgba(0,0,0,.35);z-index:999999;font-size:14px;";
+        
+        const header=document.createElement("div");
+        header.style="padding:12px;background:linear-gradient(90deg,#222,#444);color:#fff;cursor:move;display:flex;justify-content:space-between;border-radius:12px 12px 0 0;";
+        header.innerHTML=`<span>${title}</span><span style="cursor:pointer;">✖</span>`;
+        header.lastChild.onclick=()=>modal.remove();
+        
+        const body=document.createElement("div");
+        body.style="padding:16px;overflow-y:auto;max-height:500px;min-height:80px;";
+        body.innerHTML="<div style='color:#666'>加载中...</div>";
+        
+        modal.appendChild(header);
+        modal.appendChild(body);
+        document.body.appendChild(modal);
+        makeDraggable(modal,header);
+
+        // 异步渲染，不阻塞UI
+        setTimeout(()=>{body.innerHTML=html;},0);
+        
+        modal.close=()=>modal.style.display="none";
+        return modal;
+    }
+
+    function fetchInfo(magnet) {
+        const modal=createModal("识别信息","");
+        if(cache.has(magnet)){
+            setTimeout(()=>{modal.querySelector("div[style*='padding:16px']").innerHTML=cache.get(magnet);},0);
+            return;
+        }
+
+        const errorC=()=>{
+            const html=`<p><b>磁力:</b>${magnet||"未知"}</p><p><b>状态:</b>解析失败</p>`;
+            cache.set(magnet,html);
+            modal.querySelector("div[style*='padding:16px']").innerHTML=html;
+        };
+
+        GM_xmlhttpRequest({
+            method:"GET",
+            url:`https://whatslink.info/api/v1/link?url=${encodeURIComponent(magnet)}`,
+            onload:r=>{
+                let d;
+                try{d=JSON.parse(r.responseText);}catch{errorC();return;}
+                const bid=Date.now();
+                let html=`<p><b>识别内容：</b>${magnet} <button id="copyMagnet_${bid}">复制</button></p>
+                <p><b>名称：</b>${d.name||"未知"}</p>
+                <p><b>大小：</b>${formatSize(d.size)} <b>文件数：</b>${d.count||0} <b>类型：</b>${d.file_type||"未知"}</p>`;
+                
+                if(d.screenshots?.length){
+                    html+="<hr><div style='display:grid;grid-template-columns:1fr 1fr;gap:8px;'>";
+                    d.screenshots.forEach(s=>{html+=`<img src="${s.screenshot}" style='width:100%;border-radius:8px;'>`});
+                    html+="</div>";
+                }
+                cache.set(magnet,html);
+                const body=modal.querySelector("div[style*='padding:16px']");
+                body.innerHTML=html;
+                const btn=document.getElementById(`copyMagnet_${bid}`);
+                if(btn){btn.magnet=magnet;btn.onclick=()=>GM_setClipboard(magnet);}
+            },
+            onerror:errorC,ontimeout:errorC,onabort:errorC
+        });
+    }
+
+    function processNode_M1(node,cb=null){if(!M1Enabled)return;processTextNode(node,cb)}
+
+    function processTextNode(node,cb=null){
+        if(node?.parentNode?.closest(".magnet-wrap"))return;
+        const text=node.nodeValue;
+        let matches=[...text.matchAll(magnetRegex),...text.matchAll(hashRegex),...text.matchAll(bjxRegex)];
+        if(!matches.length)return;
+        matches.sort((a,b)=>a.index-b.index);
+        const frag=document.createDocumentFragment();
+        let last=0;
+
+        for(let m of matches){
+            const raw=m[0],idx=m.index;
+            if(idx<last)continue;
+            frag.appendChild(document.createTextNode(text.slice(last,idx)));
+            let magnet=null;
+            if(raw.startsWith("magnet:"))magnet=raw;
+            else if(/^[a-fA-F0-9]{32,40}$/.test(raw))magnet=buildMagnet(raw);
+            else{const h=decodeBJX(raw);if(h)magnet=buildMagnet(h)}
+            
+            if(magnet){
+                if(cb&&cb(magnet))return;
+                const wrap=document.createElement("span");
+                wrap.className="magnet-wrap";
+                const span=document.createElement("span");
+                span.style="color:#c00;text-decoration:underline;margin-right:6px;";
+                span.textContent=raw;
+                const btn=document.createElement("button");
+                btn.textContent="查看";
+                btn.style="margin-right:10px;";
+                btn.onclick=()=>fetchInfo(magnet);
+                wrap.appendChild(span);
+                wrap.appendChild(btn);
+                frag.appendChild(wrap);
+            }else{frag.appendChild(document.createTextNode(raw));}
+            last=idx+raw.length;
+        }
+        frag.appendChild(document.createTextNode(text.slice(last)));
+        node.parentNode.replaceChild(frag,node);
+    }
+
+    // 异步分批次扫描，不卡顿
+    function scan(root=document.body){
+        requestIdleCallback(()=>{
+            const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null,false);
+            const nodes=[];let n;
+            while(n=walker.nextNode()){
+                if(!n.parentNode)continue;
+                if(["SCRIPT","STYLE","TEXTAREA"].includes(n.parentNode.tagName))continue;
+                nodes.push(n);
+            }
+            let i=0,batch=30;
+            function run(){
+                const end=Math.min(i+batch,nodes.length);
+                for(;i<end;i++)processNode_M1(nodes[i]);
+                if(i<nodes.length)requestIdleCallback(run);
+            }
+            run();
+        });
+    }
+
+    const observer=new MutationObserver(debounce(muts=>{
+        muts.forEach(m=>m.addedNodes.forEach(node=>{
+            if(node.nodeType===3)processNode_M1(node);
+            else if(node.nodeType===1)scan(node);
+        }));
+    },100));
+
+    window.addEventListener("load",()=>{if(M1Enabled){scan();observer.observe(document.body,{childList:true,subtree:true})}});
+
+    // 拖选防抖优化
+    document.addEventListener("mouseup",debounce(e=>{
+        if(!M2Enabled||e.target.id==="link-checker-btn")return;
+        const t=window.getSelection().toString().trim();
+        if(t.length>0)processTextNode({nodeValue:t},mag=>{showSearchButton(window.getSelection(),mag);return true});
+    },50));
+
+    document.addEventListener("mousedown",e=>{
+        if(!M2Enabled)return;
+        const b=document.getElementById('link-checker-btn');
+        if(b&&e.target!==b)b.remove();
+    });
+
+    function showSearchButton(sel,magnet){
+        const old=document.getElementById('link-checker-btn');
+        if(old)old.remove();
+        const rect=sel.getRangeAt(0).getBoundingClientRect();
+        const btn=document.createElement('button');
+        btn.id='link-checker-btn';
+        btn.innerText='🔍解析链接';
+        Object.assign(btn.style,{
+            position:'fixed',top:rect.top-40+'px',left:rect.left+'px',zIndex:10000,
+            backgroundColor:'#007bff',color:'white',border:'none',borderRadius:'4px',padding:'5px 10px',cursor:'pointer'
+        });
+        btn.onclick=()=>{fetchInfo(magnet);btn.remove();};
+        document.body.appendChild(btn);
+    }
+})();
