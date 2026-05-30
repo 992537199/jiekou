@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         百家姓/磁力/MD5 终极稳定版-流畅修复版
+// @name         百家姓/磁力/MD5 终极稳定版-流畅优化
 // @namespace    http://tampermonkey.net/
-// @description  @肥羊 流畅修复
+// @description  @肥羊 流畅优化
 // @version      4.2.2
 // @match        https://www.wnflb2023.com/forum.php?mod=viewthread&tid=*
 // @match        https://www.wnflb2023.com/thread*
@@ -13,9 +13,10 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setClipboard
 // @connect      whatslink.info
-// @downloadURL https://update.greasyfork.org/scripts/567514/%E7%99%BE%E5%AE%B6%E5%A7%93%E7%A3%81%E5%8A%9BMD5%20%E7%BB%88%E6%9E%81%E7%A8%B3%E5%AE%9A%E7%89%88.user.js
-// @updateURL https://update.greasyfork.org/scripts/567514/%E7%99%BE%E5%AE%B6%E5%A7%93%E7%A3%81%E5%8A%9BMD5%20%E7%BB%88%E6%9E%81%E7%A8%B3%E5%AE%9A%E7%89%88.meta.js
-// ==UserScript==
+// @downloadURL  https://update.greasyfork.org/scripts/567514/%E7%99%BE%E5%AE%B6%E5%A7%93%E7%A3%81%E5%8A%9BMD5%20%E7%BB%88%E6%9E%81%E7%A8%B3%E5%AE%9A%E7%89%88.user.js
+// @updateURL    https://update.greasyfork.org/scripts/567514/%E7%99%BE%E5%AE%B6%E5%A7%93%E7%A3%81%E5%8A%9BMD5%20%E7%BB%88%E6%9E%81%E7%A8%B3%E5%AE%9A%E7%89%88.meta.js
+// ==/UserScript==
+
 (function () {
     'use strict';
     let m1Name = "主动识别"
@@ -94,7 +95,7 @@
         document.onmouseup = () => d = false;
     }
 
-    // 核心优化：先弹窗，不阻塞，修复所有兼容性问题
+    // 只改这里：先弹窗再渲染，解决卡顿，不破坏任何逻辑
     function createModal(title, html) {
         const modal = document.createElement("div");
         modal.style = "position:fixed;top:120px;left:200px;width:620px;max-height:80vh;overflow:hidden;background:#fff;border-radius:12px;box-shadow:0 15px 40px rgba(0,0,0,.35);z-index:999999;font-size:14px;";
@@ -112,7 +113,7 @@
         document.body.appendChild(modal);
         makeDraggable(modal, header);
 
-        // 异步渲染，解决卡顿
+        // 异步渲染，不卡顿
         setTimeout(() => { body.innerHTML = html; }, 0);
 
         modal.close = () => modal.style.display = "none";
