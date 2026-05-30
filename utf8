@@ -1,58 +1,48 @@
 // ==UserScript==
-// @name         JSON 自动格式化 + UTF-8 修复
+// @name         手机编码切换（设置版）
 // @namespace    http://tampermonkey.net/
 // @version      1.0
-// @description  自动格式化JSON、中文不乱码
+// @description  手机油猴设置里选编码，解决TVBox接口乱码
 // @author       You
 // @match        *://*/*
-// @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_registerMenuCommand
+// @run-at       document-start
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // 强制UTF-8编码
-    document.charset = 'utf-8';
-    document.documentElement.charset = 'utf-8';
+    // 读取保存的编码，默认UTF-8
+    const defaultCharset = 'UTF-8';
+    let currentCharset = GM_getValue('selected_charset', defaultCharset);
 
-    function formatJSON(text) {
-        try {
-            return JSON.stringify(JSON.parse(text), null, 2);
-        } catch (e) {
-            return text;
+    // 强制设置页面编码
+    function applyCharset(cs) {
+        // 替换或添加meta charset
+        let meta = document.querySelector('meta[charset]');
+        if (!meta) {
+            meta = document.createElement('meta');
+            document.head.prepend(meta);
         }
+        meta.setAttribute('charset', cs);
+        document.charset = cs;
+        document.documentElement.charset = cs;
     }
 
-    function syntaxHighlight(json) {
-        json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return json.replace(
-            /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
-            function (match) {
-                let cls = 'number';
-                if (/^"/.test(match)) {
-                    cls = /:$/.test(match) ? 'key' : 'string';
-                } else if (/true|false/.test(match)) {
-                    cls = 'boolean';
-                } else if (/null/.test(match)) {
-                    cls = 'null';
-                }
-                return '<span class="' + cls + '">' + match + '</span>';
-            }
-        );
-    }
+    // 初始加载时应用编码
+    applyCharset(currentCharset);
 
-    GM_addStyle(`
-        pre { outline: 1px solid #ccc; padding: 10px; margin: 0; }
-        .string { color: green; }
-        .number { color: darkorange; }
-        .boolean { color: blue; }
-        .null { color: magenta; }
-        .key { color: red; }
-    `);
+    // 在油猴菜单里添加设置项（手机点脚本→设置可见）
+    const charsets = ['UTF-8', 'GBK', 'GB2312', 'ISO-8859-1'];
+    charsets.forEach(cs => {
+        GM_registerMenuCommand(`编码: ${cs}`, () => {
+            GM_setValue('selected_charset', cs);
+            currentCharset = cs;
+            // 刷新页面生效
+            window.location.reload();
+        });
+    });
 
-    const pre = document.querySelector('pre');
-    if (pre) {
-        const formatted = formatJSON(pre.textContent);
-        pre.innerHTML = syntaxHighlight(formatted);
-    }
 })();
