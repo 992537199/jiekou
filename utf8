@@ -1,9 +1,8 @@
 // ==UserScript==
-// @name         手机编码切换（设置版）
+// @name         手机编码切换（增强解码版）
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  手机油猴设置里选编码，解决TVBox接口乱码
-// @author       You
+// @version      2.0
+// @description  解决接口乱码（真正生效版）
 // @match        *://*/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -14,35 +13,78 @@
 (function() {
     'use strict';
 
-    // 读取保存的编码，默认UTF-8
-    const defaultCharset = 'UTF-8';
-    let currentCharset = GM_getValue('selected_charset', defaultCharset);
+    const defaultCharset = 'utf-8';
+    let currentCharset = GM_getValue('selected_charset', defaultCharset).toLowerCase();
 
-    // 强制设置页面编码
-    function applyCharset(cs) {
-        // 替换或添加meta charset
-        let meta = document.querySelector('meta[charset]');
-        if (!meta) {
-            meta = document.createElement('meta');
-            document.head.prepend(meta);
-        }
-        meta.setAttribute('charset', cs);
-        document.charset = cs;
-        document.documentElement.charset = cs;
-    }
+    const charsets = ['utf-8', 'gbk', 'gb2312', 'big5'];
 
-    // 初始加载时应用编码
-    applyCharset(currentCharset);
-
-    // 在油猴菜单里添加设置项（手机点脚本→设置可见）
-    const charsets = ['UTF-8', 'GBK', 'GB2312', 'ISO-8859-1'];
+    // 菜单
     charsets.forEach(cs => {
         GM_registerMenuCommand(`编码: ${cs}`, () => {
             GM_setValue('selected_charset', cs);
-            currentCharset = cs;
-            // 刷新页面生效
-            window.location.reload();
+            location.reload();
         });
     });
+
+    console.log('[编码插件] 当前编码:', currentCharset);
+
+    // ===== 核心：解码函数 =====
+    async function decodeResponse(response) {
+        const buffer = await response.arrayBuffer();
+
+        try {
+            const decoder = new TextDecoder(currentCharset);
+            return decoder.decode(buffer);
+        } catch (e) {
+            console.warn('解码失败，使用默认 utf-8');
+            return new TextDecoder('utf-8').decode(buffer);
+        }
+    }
+
+    // ===== Hook fetch =====
+    const originalFetch = window.fetch;
+    window.fetch = async function(...args) {
+        const res = await originalFetch.apply(this, args);
+
+        const cloned = res.clone();
+
+        try {
+            const text = await decodeResponse(cloned);
+
+            return new Response(text, {
+                status: res.status,
+                statusText: res.statusText,
+                headers: res.headers
+            });
+        } catch (e) {
+            return res;
+        }
+    };
+
+    // ===== Hook XHR =====
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function(...args) {
+        this._url = args[1];
+        return origOpen.apply(this, args);
+    };
+
+    XMLHttpRequest.prototype.send = function(...args) {
+        this.addEventListener('readystatechange', function() {
+            if (this.readyState === 4 && this.responseType === '' || this.responseType === 'text') {
+                try {
+                    const decoder = new TextDecoder(currentCharset);
+                    const text = decoder.decode(this.response);
+
+                    Object.defineProperty(this, 'responseText', {
+                        value: text
+                    });
+                } catch (e) {}
+            }
+        });
+
+        return origSend.apply(this, args);
+    };
 
 })();
