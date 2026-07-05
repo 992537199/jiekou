@@ -1,100 +1,97 @@
 // ==UserScript==
-// @name         cilimo 条目内明文InfoHash一键复制磁力按钮
+// @name         cilimo磁力魔-劫持JSON获取info_hash一键复制磁力
 // @namespace    http://tampermonkey.net/
-// @version      5.0
-// @description  读取每条资源下方明文显示的40位InfoHash，把右侧磁力链接按钮改为复制按钮
+// @version      4.0
+// @description  劫持页面JSON搜索接口，缓存每条info_hash，改造原有磁力链接按钮实现复制
 // @author       You
 // @match        https://cilimo.com/*
 // @grant        GM_setClipboard
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function() {
     'use strict';
-    // 严格匹配40位十六进制InfoHash
-    const HASH_REG = /[0-9a-fA-F]{40}/;
-    // 生成标准磁力链接
-    const makeMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
+    // 存储当前页面所有资源 {标题: info_hash}
+    const torrentHashMap = new Map();
+    // 劫持原生JSON.parse，捕获搜索结果JSON
+    const originJSONParse = JSON.parse;
+    JSON.parse = function(str) {
+        const data = originJSONParse.call(this, str);
+        // 判断是搜索结果接口 rsp_228search.json 格式
+        if (data && Array.isArray(data.results) && data.results.length > 0 && data.results[0].info_hash) {
+            // 清空旧缓存
+            torrentHashMap.clear();
+            // 存入哈希映射
+            data.results.forEach(item => {
+                torrentHashMap.set(item.name.trim(), item.info_hash);
+            });
+            console.log("已缓存所有资源hash", torrentHashMap);
+            // 延迟执行按钮改造
+            setTimeout(scanAllMagnetBtns, 300);
+        }
+        return data;
+    };
 
-    function convertMagnetButton(btn) {
-        // 防止重复绑定
-        if (btn._fixed) return;
-        btn._fixed = true;
+    // 拼接磁力链接
+    const buildMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
 
-        // 取消原跳转链接
-        btn.removeAttribute('href');
-        btn.style.cursor = 'pointer';
-        btn.innerText = '复制磁力';
+    // 处理单个磁力按钮
+    function processBtn(btn) {
+        if (btn._done) return;
+        btn._done = true;
+        // 清除跳转链接
+        btn.removeAttribute("href");
+        btn.style.cursor = "pointer";
+        btn.textContent = "复制磁力";
 
-        // 向上逐级寻找当前整一个资源大区块
-        let container = btn.parentElement;
-        let targetHash = null;
-
-        // 最多向上10层查找当前资源整块容器
-        for (let level = 0; level < 10; level++) {
-            if (!container) break;
-            // 在当前区块内查找第一个40位哈希
-            const allText = container.innerText;
-            const hit = allText.match(HASH_REG);
-            if (hit) {
-                targetHash = hit[0];
+        // 向上查找本条资源标题
+        let wrap = btn;
+        let titleText = "";
+        for (let i = 0; i < 10; i++) {
+            wrap = wrap.parentElement;
+            if (!wrap) break;
+            // 取容器内第一行标题文本
+            const text = wrap.innerText.split("\n")[0].trim();
+            if (text && torrentHashMap.has(text)) {
+                titleText = text;
                 break;
             }
-            container = container.parentElement;
         }
-
-        // 没找到哈希就标记
-        if (!targetHash) {
-            btn.innerText = '无哈希';
+        if (!titleText || !torrentHashMap.has(titleText)) {
+            btn.textContent = "无资源哈希";
             return;
         }
-        const magnetLink = makeMagnet(targetHash);
+        const hash = torrentHashMap.get(titleText);
+        const magnetUrl = buildMagnet(hash);
 
-        // 点击复制逻辑
-        btn.onclick = async function(e) {
+        // 点击复制
+        btn.onclick = async e => {
             e.preventDefault();
-            const defaultText = this.innerText;
+            const oldTxt = btn.textContent;
             try {
-                GM_setClipboard(magnetLink);
-                this.innerText = '✅已复制';
-                console.log('本条磁力链接：', magnetLink);
+                GM_setClipboard(magnetUrl);
+                btn.textContent = "✅已复制";
+                console.log("复制成功：", magnetUrl);
             } catch (err) {
-                await navigator.clipboard.writeText(magnetLink);
-                this.innerText = '✅已复制';
+                await navigator.clipboard.writeText(magnetUrl);
+                btn.textContent = "✅已复制";
             }
-            setTimeout(() => {
-                this.innerText = defaultText;
-            }, 2000);
+            setTimeout(() => btn.textContent = oldTxt, 2000);
         };
     }
 
-    // 遍历页面所有磁力链接按钮
-    function refreshAllButtons() {
-        const allA = document.querySelectorAll('a');
-        allA.forEach(a => {
+    // 扫描全部磁力链接按钮
+    function scanAllMagnetBtns() {
+        document.querySelectorAll("a").forEach(a => {
             const txt = a.innerText.trim();
-            if (txt === '磁力链接') {
-                convertMagnetButton(a);
-            }
+            if (txt === "磁力链接") processBtn(a);
         });
     }
 
-    // 防抖
-    let timer = null;
-    function debounceRun() {
-        clearTimeout(timer);
-        timer = setTimeout(refreshAllButtons, 250);
-    }
-
-    // 页面加载完成执行
-    setTimeout(debounceRun, 600);
-    window.addEventListener('load', debounceRun);
-
-    // 监听动态加载
-    const observer = new MutationObserver(debounceRun);
-    observer.observe(document.body, {
-        childList: true,
-        subtree: true
+    // DOM监听，翻页/刷新结果自动执行
+    const observer = new MutationObserver(() => {
+        setTimeout(scanAllMagnetBtns, 200);
     });
+    observer.observe(document.body, {childList: true, subtree: true});
 
 })();
