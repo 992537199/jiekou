@@ -1,0 +1,89 @@
+// ==UserScript==
+// @name         cilimo磁力魔-原有磁力按钮一键复制
+// @namespace    http://tampermonkey.net/
+// @version      1.1
+// @description  把cilimo原有右侧磁力链接按钮改成直接复制磁力，不再跳转页面
+// @author       You
+// @match        https://cilimo.com/*
+// @grant        GM_setClipboard
+// @run-at       document-end
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // InfoHash转标准磁力链接
+    function hash2Magnet(infoHash) {
+        return `magnet:?xt=urn:btih:${infoHash}`;
+    }
+
+    // 改造单个磁力按钮
+    function convertBtn(btn) {
+        // 已经改造过就跳过
+        if (btn.dataset.converted === "1") return;
+        btn.dataset.converted = "1";
+
+        // 向上找到整条资源卡片
+        let itemWrap = btn;
+        while (itemWrap) {
+            const hashEl = itemWrap.querySelector("span,div");
+            if (hashEl && /^[0-9a-fA-F]{40}$/.test(hashEl.textContent.trim())) {
+                break;
+            }
+            itemWrap = itemWrap.parentElement;
+        }
+        if (!itemWrap) return;
+
+        // 提取40位InfoHash
+        const allText = itemWrap.innerText;
+        const hashMatch = allText.match(/([0-9a-fA-F]{40})/);
+        if (!hashMatch) return;
+        const hash = hashMatch[1];
+        const magnet = hash2Magnet(hash);
+
+        // 取消原有跳转链接
+        btn.removeAttribute("href");
+        btn.style.cursor = "pointer";
+        btn.innerText = "复制磁力";
+
+        // 点击复制逻辑
+        btn.onclick = async function(e) {
+            e.preventDefault();
+            const oldTxt = this.innerText;
+            try {
+                GM_setClipboard(magnet);
+                this.innerText = "✅已复制";
+            } catch (err) {
+                await navigator.clipboard.writeText(magnet);
+                this.innerText = "✅已复制";
+            }
+            setTimeout(() => {
+                this.innerText = oldTxt;
+            }, 2000);
+        };
+    }
+
+    // 批量处理页面所有磁力按钮
+    function updateAllBtns() {
+        // 匹配页面右侧竖排磁力按钮
+        const allMagnetBtns = document.querySelectorAll("div[style*='writing-mode'],a:contains('磁力链接')");
+        document.querySelectorAll("a").forEach(a => {
+            if (a.innerText.trim() === "磁力链接") {
+                convertBtn(a);
+            }
+        });
+    }
+
+    // 初次运行
+    setTimeout(updateAllBtns, 400);
+
+    // 监听动态加载（翻页、搜索结果刷新）
+    const observer = new MutationObserver(() => {
+        setTimeout(updateAllBtns, 300);
+    });
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+})();
