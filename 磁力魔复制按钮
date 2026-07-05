@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         cilimo磁力魔-data属性版复制按钮
+// @name         cilimo 条目内明文InfoHash一键复制磁力按钮
 // @namespace    http://tampermonkey.net/
-// @version      4.1
-// @description  读取条目data-info-hash属性，改造原有磁力链接按钮复制磁力
+// @version      5.0
+// @description  读取每条资源下方明文显示的40位InfoHash，把右侧磁力链接按钮改为复制按钮
 // @author       You
 // @match        https://cilimo.com/*
 // @grant        GM_setClipboard
@@ -11,58 +11,90 @@
 
 (function() {
     'use strict';
-    const buildMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
+    // 严格匹配40位十六进制InfoHash
+    const HASH_REG = /[0-9a-fA-F]{40}/;
+    // 生成标准磁力链接
+    const makeMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
 
-    function processBtn(btn) {
-        if (btn._processed) return;
-        btn._processed = true;
-        btn.removeAttribute("href");
-        btn.style.cursor = "pointer";
-        btn.textContent = "复制磁力";
+    function convertMagnetButton(btn) {
+        // 防止重复绑定
+        if (btn._fixed) return;
+        btn._fixed = true;
 
-        // 向上找带data-info-hash的父容器
-        let item = btn;
+        // 取消原跳转链接
+        btn.removeAttribute('href');
+        btn.style.cursor = 'pointer';
+        btn.innerText = '复制磁力';
+
+        // 向上逐级寻找当前整一个资源大区块
+        let container = btn.parentElement;
         let targetHash = null;
-        while (item) {
-            const hash = item.dataset.infoHash;
-            if (hash) {
-                targetHash = hash;
+
+        // 最多向上10层查找当前资源整块容器
+        for (let level = 0; level < 10; level++) {
+            if (!container) break;
+            // 在当前区块内查找第一个40位哈希
+            const allText = container.innerText;
+            const hit = allText.match(HASH_REG);
+            if (hit) {
+                targetHash = hit[0];
                 break;
             }
-            item = item.parentElement;
+            container = container.parentElement;
         }
+
+        // 没找到哈希就标记
         if (!targetHash) {
-            btn.textContent = "无哈希";
+            btn.innerText = '无哈希';
             return;
         }
-        const magnet = buildMagnet(targetHash);
+        const magnetLink = makeMagnet(targetHash);
 
-        btn.onclick = async e => {
+        // 点击复制逻辑
+        btn.onclick = async function(e) {
             e.preventDefault();
-            const old = btn.textContent;
+            const defaultText = this.innerText;
             try {
-                GM_setClipboard(magnet);
-                btn.textContent = "✅已复制";
-            } catch {
-                await navigator.clipboard.writeText(magnet);
-                btn.textContent = "✅已复制";
+                GM_setClipboard(magnetLink);
+                this.innerText = '✅已复制';
+                console.log('本条磁力链接：', magnetLink);
+            } catch (err) {
+                await navigator.clipboard.writeText(magnetLink);
+                this.innerText = '✅已复制';
             }
-            setTimeout(() => btn.textContent = old, 2000);
+            setTimeout(() => {
+                this.innerText = defaultText;
+            }, 2000);
         };
     }
 
-    function scanBtns() {
-        document.querySelectorAll("a").forEach(a => {
-            if (a.innerText.trim() === "磁力链接") processBtn(a);
+    // 遍历页面所有磁力链接按钮
+    function refreshAllButtons() {
+        const allA = document.querySelectorAll('a');
+        allA.forEach(a => {
+            const txt = a.innerText.trim();
+            if (txt === '磁力链接') {
+                convertMagnetButton(a);
+            }
         });
     }
 
-    let timer;
-    function debounce() {
+    // 防抖
+    let timer = null;
+    function debounceRun() {
         clearTimeout(timer);
-        timer = setTimeout(scanBtns, 250);
+        timer = setTimeout(refreshAllButtons, 250);
     }
-    setTimeout(debounce, 600);
-    const ob = new MutationObserver(debounce);
-    ob.observe(document.body, {childList: true, subtree: true});
+
+    // 页面加载完成执行
+    setTimeout(debounceRun, 600);
+    window.addEventListener('load', debounceRun);
+
+    // 监听动态加载
+    const observer = new MutationObserver(debounceRun);
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
 })();
