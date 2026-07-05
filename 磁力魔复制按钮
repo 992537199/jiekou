@@ -1,87 +1,100 @@
 // ==UserScript==
-// @name         cilimo磁力魔-原有磁力按钮一键复制
+// @name         cilimo磁力魔-竖排磁力链接按钮一键复制
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  把cilimo原有右侧磁力链接按钮改成直接复制磁力，不再跳转页面
+// @version      2.0
+// @description  将cilimo右侧竖排"磁力链接"按钮改为一键复制磁力，禁止跳转
 // @author       You
 // @match        https://cilimo.com/*
 // @grant        GM_setClipboard
-// @run-at       document-end
+// @run-at       document-idle
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // InfoHash转标准磁力链接
-    function hash2Magnet(infoHash) {
-        return `magnet:?xt=urn:btih:${infoHash}`;
-    }
+    // 40位哈希转为标准磁力链接
+    const buildMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
+    // 40位十六进制InfoHash正则
+    const hashReg = /[0-9a-fA-F]{40}/;
 
-    // 改造单个磁力按钮
-    function convertBtn(btn) {
-        // 已经改造过就跳过
-        if (btn.dataset.converted === "1") return;
-        btn.dataset.converted = "1";
+    // 处理单个竖排磁力按钮
+    function handleMagnetBtn(btn) {
+        if (btn.dataset.done === '1') return;
+        btn.dataset.done = '1';
 
-        // 向上找到整条资源卡片
-        let itemWrap = btn;
-        while (itemWrap) {
-            const hashEl = itemWrap.querySelector("span,div");
-            if (hashEl && /^[0-9a-fA-F]{40}$/.test(hashEl.textContent.trim())) {
+        // 沿着DOM向上找到整条资源卡片容器
+        let parent = btn;
+        let itemBox = null;
+        // 最多向上查找8级父节点，避免死循环
+        for (let i = 0; i < 8; i++) {
+            parent = parent.parentElement;
+            if (!parent) break;
+            // 在父容器内匹配40位InfoHash
+            if (hashReg.test(parent.innerText)) {
+                itemBox = parent;
                 break;
             }
-            itemWrap = itemWrap.parentElement;
         }
-        if (!itemWrap) return;
+        if (!itemBox) return;
 
-        // 提取40位InfoHash
-        const allText = itemWrap.innerText;
-        const hashMatch = allText.match(/([0-9a-fA-F]{40})/);
-        if (!hashMatch) return;
-        const hash = hashMatch[1];
-        const magnet = hash2Magnet(hash);
+        // 提取哈希值
+        const hashResult = itemBox.innerText.match(hashReg);
+        if (!hashResult) return;
+        const magnetLink = buildMagnet(hashResult[0]);
 
-        // 取消原有跳转链接
-        btn.removeAttribute("href");
-        btn.style.cursor = "pointer";
-        btn.innerText = "复制磁力";
+        // 移除原有跳转地址
+        btn.removeAttribute('href');
+        btn.style.cursor = 'pointer';
+        btn.textContent = '复制磁力';
 
-        // 点击复制逻辑
+        // 点击复制事件
         btn.onclick = async function(e) {
             e.preventDefault();
-            const oldTxt = this.innerText;
+            const originText = this.textContent;
             try {
-                GM_setClipboard(magnet);
-                this.innerText = "✅已复制";
+                // 优先油猴剪贴板
+                GM_setClipboard(magnetLink);
+                this.textContent = '✅已复制';
             } catch (err) {
-                await navigator.clipboard.writeText(magnet);
-                this.innerText = "✅已复制";
+                // 浏览器原生剪贴板兜底
+                await navigator.clipboard.writeText(magnetLink);
+                this.textContent = '✅已复制';
             }
+            // 2秒复原文字
             setTimeout(() => {
-                this.innerText = oldTxt;
+                this.textContent = originText;
             }, 2000);
         };
     }
 
-    // 批量处理页面所有磁力按钮
-    function updateAllBtns() {
-        // 匹配页面右侧竖排磁力按钮
-        const allMagnetBtns = document.querySelectorAll("div[style*='writing-mode'],a:contains('磁力链接')");
-        document.querySelectorAll("a").forEach(a => {
-            if (a.innerText.trim() === "磁力链接") {
-                convertBtn(a);
+    // 批量扫描所有磁力按钮
+    function scanAllButtons() {
+        // 精准匹配所有文字为"磁力链接"的a标签按钮
+        const allBtns = document.querySelectorAll('a');
+        allBtns.forEach(btn => {
+            const txt = btn.innerText.trim();
+            if (txt === '磁力链接') {
+                handleMagnetBtn(btn);
             }
         });
     }
 
-    // 初次运行
-    setTimeout(updateAllBtns, 400);
+    // 防抖延迟执行，避免频繁重复运行
+    let delayTimer = null;
+    function debounceRun() {
+        clearTimeout(delayTimer);
+        delayTimer = setTimeout(scanAllButtons, 250);
+    }
 
-    // 监听动态加载（翻页、搜索结果刷新）
-    const observer = new MutationObserver(() => {
-        setTimeout(updateAllBtns, 300);
+    // 页面完全加载后第一次执行
+    window.addEventListener('load', debounceRun);
+    setTimeout(debounceRun, 600);
+
+    // 全局监听DOM变化（翻页、AJAX加载新结果、切换分页）
+    const domObserver = new MutationObserver(() => {
+        debounceRun();
     });
-    observer.observe(document.body, {
+    domObserver.observe(document.body, {
         childList: true,
         subtree: true
     });
