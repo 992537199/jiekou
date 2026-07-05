@@ -1,99 +1,68 @@
 // ==UserScript==
-// @name         cilimo磁力魔-竖排磁力按钮一键复制修复版
+// @name         cilimo磁力魔-data属性版复制按钮
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  cilimo网站右侧竖排磁力链接按钮直接复制本条磁力链接，精准提取单条InfoHash
+// @version      4.1
+// @description  读取条目data-info-hash属性，改造原有磁力链接按钮复制磁力
 // @author       You
 // @match        https://cilimo.com/*
 // @grant        GM_setClipboard
-// @grant        GM_notification
 // @run-at       document-idle
 // ==/UserScript==
 
 (function() {
     'use strict';
-    // 40位十六进制InfoHash正则
-    const HASH_REG = /\b[0-9a-fA-F]{40}\b/;
-    // 拼接标准磁力链接
-    const getMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
+    const buildMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
 
-    function processSingleButton(btn) {
-        // 已处理过直接跳过
+    function processBtn(btn) {
         if (btn._processed) return;
         btn._processed = true;
+        btn.removeAttribute("href");
+        btn.style.cursor = "pointer";
+        btn.textContent = "复制磁力";
 
-        // 取消原有跳转链接
-        btn.removeAttribute('href');
-        btn.style.cursor = 'pointer';
-        btn.innerText = '复制磁力';
-
-        // 精准寻找当前按钮所在的整行资源区块
-        let itemBlock = btn.parentElement;
+        // 向上找带data-info-hash的父容器
+        let item = btn;
         let targetHash = null;
-
-        // 逐层向上遍历，直到找到包含InfoHash的区块
-        while (itemBlock) {
-            const match = itemBlock.innerText.match(HASH_REG);
-            if (match) {
-                targetHash = match[0];
+        while (item) {
+            const hash = item.dataset.infoHash;
+            if (hash) {
+                targetHash = hash;
                 break;
             }
-            itemBlock = itemBlock.parentElement;
+            item = item.parentElement;
         }
-
         if (!targetHash) {
-            btn.innerText = '无哈希';
+            btn.textContent = "无哈希";
             return;
         }
-        const fullMagnet = getMagnet(targetHash);
+        const magnet = buildMagnet(targetHash);
 
-        // 点击复制事件
-        btn.onclick = async function(e) {
+        btn.onclick = async e => {
             e.preventDefault();
-            const defaultText = this.innerText;
+            const old = btn.textContent;
             try {
-                // 优先油猴剪贴板
-                GM_setClipboard(fullMagnet);
-                this.innerText = '✅已复制';
-                GM_notification({title:"磁力复制成功",timeout:1500});
-                console.log("成功复制磁力：", fullMagnet);
-            } catch (err) {
-                // 浏览器原生剪贴板兜底
-                await navigator.clipboard.writeText(fullMagnet);
-                this.innerText = '✅已复制';
-                console.log("成功复制磁力(原生)：", fullMagnet);
+                GM_setClipboard(magnet);
+                btn.textContent = "✅已复制";
+            } catch {
+                await navigator.clipboard.writeText(magnet);
+                btn.textContent = "✅已复制";
             }
-            // 2秒恢复文字
-            setTimeout(()=>{
-                this.innerText = defaultText;
-            },2000);
+            setTimeout(() => btn.textContent = old, 2000);
         };
     }
 
-    // 扫描页面全部磁力按钮
-    function scanAllMagnetBtns() {
-        const allLinks = document.querySelectorAll('a');
-        allLinks.forEach(aTag => {
-            const text = aTag.innerText.trim();
-            if (text === '磁力链接') {
-                processSingleButton(aTag);
-            }
+    function scanBtns() {
+        document.querySelectorAll("a").forEach(a => {
+            if (a.innerText.trim() === "磁力链接") processBtn(a);
         });
     }
 
-    // 防抖函数，避免频繁重复执行
-    let timer = null;
-    function debounceExec() {
+    let timer;
+    function debounce() {
         clearTimeout(timer);
-        timer = setTimeout(scanAllMagnetBtns, 300);
+        timer = setTimeout(scanBtns, 250);
     }
-
-    // 初始化执行
-    window.addEventListener('load', debounceExec);
-    setTimeout(debounceExec, 800);
-
-    // 监听页面动态加载（翻页、AJAX刷新）
-    const observer = new MutationObserver(debounceExec);
-    observer.observe(document.body, {childList:true,subtree:true});
-
+    setTimeout(debounce, 600);
+    const ob = new MutationObserver(debounce);
+    ob.observe(document.body, {childList: true, subtree: true});
 })();
