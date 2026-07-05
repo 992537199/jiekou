@@ -1,102 +1,99 @@
 // ==UserScript==
-// @name         cilimo磁力魔-竖排磁力链接按钮一键复制
+// @name         cilimo磁力魔-竖排磁力按钮一键复制修复版
 // @namespace    http://tampermonkey.net/
-// @version      2.0
-// @description  将cilimo右侧竖排"磁力链接"按钮改为一键复制磁力，禁止跳转
+// @version      3.0
+// @description  cilimo网站右侧竖排磁力链接按钮直接复制本条磁力链接，精准提取单条InfoHash
 // @author       You
 // @match        https://cilimo.com/*
 // @grant        GM_setClipboard
+// @grant        GM_notification
 // @run-at       document-idle
 // ==/UserScript==
 
 (function() {
     'use strict';
-
-    // 40位哈希转为标准磁力链接
-    const buildMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
     // 40位十六进制InfoHash正则
-    const hashReg = /[0-9a-fA-F]{40}/;
+    const HASH_REG = /\b[0-9a-fA-F]{40}\b/;
+    // 拼接标准磁力链接
+    const getMagnet = hash => `magnet:?xt=urn:btih:${hash}`;
 
-    // 处理单个竖排磁力按钮
-    function handleMagnetBtn(btn) {
-        if (btn.dataset.done === '1') return;
-        btn.dataset.done = '1';
+    function processSingleButton(btn) {
+        // 已处理过直接跳过
+        if (btn._processed) return;
+        btn._processed = true;
 
-        // 沿着DOM向上找到整条资源卡片容器
-        let parent = btn;
-        let itemBox = null;
-        // 最多向上查找8级父节点，避免死循环
-        for (let i = 0; i < 8; i++) {
-            parent = parent.parentElement;
-            if (!parent) break;
-            // 在父容器内匹配40位InfoHash
-            if (hashReg.test(parent.innerText)) {
-                itemBox = parent;
-                break;
-            }
-        }
-        if (!itemBox) return;
-
-        // 提取哈希值
-        const hashResult = itemBox.innerText.match(hashReg);
-        if (!hashResult) return;
-        const magnetLink = buildMagnet(hashResult[0]);
-
-        // 移除原有跳转地址
+        // 取消原有跳转链接
         btn.removeAttribute('href');
         btn.style.cursor = 'pointer';
-        btn.textContent = '复制磁力';
+        btn.innerText = '复制磁力';
+
+        // 精准寻找当前按钮所在的整行资源区块
+        let itemBlock = btn.parentElement;
+        let targetHash = null;
+
+        // 逐层向上遍历，直到找到包含InfoHash的区块
+        while (itemBlock) {
+            const match = itemBlock.innerText.match(HASH_REG);
+            if (match) {
+                targetHash = match[0];
+                break;
+            }
+            itemBlock = itemBlock.parentElement;
+        }
+
+        if (!targetHash) {
+            btn.innerText = '无哈希';
+            return;
+        }
+        const fullMagnet = getMagnet(targetHash);
 
         // 点击复制事件
         btn.onclick = async function(e) {
             e.preventDefault();
-            const originText = this.textContent;
+            const defaultText = this.innerText;
             try {
                 // 优先油猴剪贴板
-                GM_setClipboard(magnetLink);
-                this.textContent = '✅已复制';
+                GM_setClipboard(fullMagnet);
+                this.innerText = '✅已复制';
+                GM_notification({title:"磁力复制成功",timeout:1500});
+                console.log("成功复制磁力：", fullMagnet);
             } catch (err) {
                 // 浏览器原生剪贴板兜底
-                await navigator.clipboard.writeText(magnetLink);
-                this.textContent = '✅已复制';
+                await navigator.clipboard.writeText(fullMagnet);
+                this.innerText = '✅已复制';
+                console.log("成功复制磁力(原生)：", fullMagnet);
             }
-            // 2秒复原文字
-            setTimeout(() => {
-                this.textContent = originText;
-            }, 2000);
+            // 2秒恢复文字
+            setTimeout(()=>{
+                this.innerText = defaultText;
+            },2000);
         };
     }
 
-    // 批量扫描所有磁力按钮
-    function scanAllButtons() {
-        // 精准匹配所有文字为"磁力链接"的a标签按钮
-        const allBtns = document.querySelectorAll('a');
-        allBtns.forEach(btn => {
-            const txt = btn.innerText.trim();
-            if (txt === '磁力链接') {
-                handleMagnetBtn(btn);
+    // 扫描页面全部磁力按钮
+    function scanAllMagnetBtns() {
+        const allLinks = document.querySelectorAll('a');
+        allLinks.forEach(aTag => {
+            const text = aTag.innerText.trim();
+            if (text === '磁力链接') {
+                processSingleButton(aTag);
             }
         });
     }
 
-    // 防抖延迟执行，避免频繁重复运行
-    let delayTimer = null;
-    function debounceRun() {
-        clearTimeout(delayTimer);
-        delayTimer = setTimeout(scanAllButtons, 250);
+    // 防抖函数，避免频繁重复执行
+    let timer = null;
+    function debounceExec() {
+        clearTimeout(timer);
+        timer = setTimeout(scanAllMagnetBtns, 300);
     }
 
-    // 页面完全加载后第一次执行
-    window.addEventListener('load', debounceRun);
-    setTimeout(debounceRun, 600);
+    // 初始化执行
+    window.addEventListener('load', debounceExec);
+    setTimeout(debounceExec, 800);
 
-    // 全局监听DOM变化（翻页、AJAX加载新结果、切换分页）
-    const domObserver = new MutationObserver(() => {
-        debounceRun();
-    });
-    domObserver.observe(document.body, {
-        childList: true,
-        subtree: true
-    });
+    // 监听页面动态加载（翻页、AJAX刷新）
+    const observer = new MutationObserver(debounceExec);
+    observer.observe(document.body, {childList:true,subtree:true});
 
 })();
