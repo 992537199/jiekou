@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         MP4提取复制（精确版）
+// @name         视频MP4链接显示（超链接版）
 // @namespace    http://tampermonkey.net/
-// @version      3.0
-// @description  针对当前论坛视频提取mp4并复制
+// @version      4.0
+// @description  在视频下方直接显示MP4链接（可点击）
 // @match        *://*/*
-// @grant        GM_setClipboard
+// @run-at       document-end
 // ==/UserScript==
 
 (function () {
@@ -12,50 +12,51 @@
 
     const processed = new WeakSet();
 
-    function addButton(video) {
+    function addLink(video) {
         if (processed.has(video)) return;
         processed.add(video);
 
-        const btn = document.createElement('button');
-        btn.innerText = '复制MP4';
-        btn.style.display = 'block';
-        btn.style.margin = '10px 0';
-        btn.style.padding = '6px 12px';
-        btn.style.background = '#409eff';
-        btn.style.color = '#fff';
-        btn.style.border = 'none';
-        btn.style.borderRadius = '4px';
-        btn.style.cursor = 'pointer';
+        // ⭐ 直接拿 src（你这个页面就是这种结构）
+        let url = video.getAttribute('src') || video.currentSrc;
 
-        btn.onclick = function () {
-            let url = video.getAttribute('src'); // ⭐关键
+        if (!url || !url.includes('.mp4')) return;
 
-            console.log('获取到:', url);
+        // 创建链接元素
+        const link = document.createElement('a');
+        link.href = url;
+        link.innerText = '👉 点击打开视频链接';
+        link.target = '_blank';
 
-            if (!url) {
-                btn.innerText = '未找到 ❌';
-                return;
-            }
+        // 样式美化
+        link.style.display = 'block';
+        link.style.margin = '8px 0';
+        link.style.color = '#409eff';
+        link.style.fontSize = '14px';
+        link.style.wordBreak = 'break-all';
 
-            GM_setClipboard(url);
+        // 也显示完整URL（方便复制）
+        const text = document.createElement('div');
+        text.innerText = url;
+        text.style.fontSize = '12px';
+        text.style.color = '#666';
+        text.style.wordBreak = 'break-all';
 
-            btn.innerText = '已复制 ✔';
-            setTimeout(() => {
-                btn.innerText = '复制MP4';
-            }, 2000);
-        };
+        const wrapper = document.createElement('div');
+        wrapper.appendChild(link);
+        wrapper.appendChild(text);
 
-        video.insertAdjacentElement('afterend', btn);
+        // 插入到视频下方
+        video.insertAdjacentElement('afterend', wrapper);
     }
 
     function run() {
-        document.querySelectorAll('video').forEach(addButton);
+        document.querySelectorAll('video').forEach(addLink);
     }
 
-    // 初始
+    // 初始执行
     run();
 
-    // 防止动态加载
+    // 监听动态加载（论坛必须有）
     new MutationObserver(run).observe(document.body, {
         childList: true,
         subtree: true
