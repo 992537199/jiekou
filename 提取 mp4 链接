@@ -1,0 +1,80 @@
+// ==UserScript==
+// @name         页面MP4视频提取复制工具
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  自动提取页面所有video标签mp4链接，每个视频下方添加复制按钮
+// @author       You
+// @match        https://www.wnflb2023.com/*
+// @match        *://*/*
+// @grant        GM_setClipboard
+// @grant        GM_notification
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // 给每个video标签添加复制按钮
+    function addCopyBtnToVideo() {
+        // 获取页面全部视频元素
+        const videoList = document.querySelectorAll('video');
+        if (videoList.length === 0) return;
+
+        videoList.forEach(video => {
+            // 跳过已添加过按钮的视频，防止重复生成
+            if (video.nextElementSibling && video.nextElementSibling.classList.contains('video-copy-btn-wrap')) return;
+
+            const mp4Url = video.src;
+            if (!mp4Url || !mp4Url.endsWith('.mp4')) return;
+
+            // 创建按钮容器
+            const btnWrap = document.createElement('div');
+            btnWrap.className = 'video-copy-btn-wrap';
+            btnWrap.style.cssText = `
+                margin:8px 0 16px;
+            `;
+
+            // 创建复制按钮
+            const copyBtn = document.createElement('button');
+            copyBtn.innerText = '复制视频MP4链接';
+            copyBtn.style.cssText = `
+                padding:6px 14px;
+                background:#0066cc;
+                color:#fff;
+                border:none;
+                border-radius:4px;
+                cursor:pointer;
+                font-size:14px;
+            `;
+            // hover样式
+            copyBtn.onmouseover = () => copyBtn.style.background = '#0052a3';
+            copyBtn.onmouseout = () => copyBtn.style.background = '#0066cc';
+
+            // 点击复制逻辑
+            copyBtn.onclick = () => {
+                GM_setClipboard(mp4Url);
+                GM_notification({
+                    title: '复制成功',
+                    text: `视频链接已复制到剪贴板：\n${mp4Url}`,
+                    timeout: 2500
+                });
+            };
+
+            btnWrap.appendChild(copyBtn);
+            // 插入到视频下方
+            video.parentNode.insertBefore(btnWrap, video.nextSibling);
+        });
+    }
+
+    // 页面初次加载执行
+    window.addEventListener('load', addCopyBtnToVideo);
+
+    // 监听页面动态加载内容（论坛滚动/弹窗加载视频）
+    const observer = new MutationObserver(mutations => {
+        addCopyBtnToVideo();
+    });
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+})();
