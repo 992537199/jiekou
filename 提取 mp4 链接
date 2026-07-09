@@ -1,80 +1,62 @@
 // ==UserScript==
-// @name         视频MP4提取+复制按钮
+// @name         MP4提取复制（精确版）
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  提取页面MP4视频链接并添加复制按钮（支持多个视频）
-// @author       You
-// @match        https://www.wnflb2023.com/forum.php*
+// @version      3.0
+// @description  针对当前论坛视频提取mp4并复制
+// @match        *://*/*
 // @grant        GM_setClipboard
-// @run-at       document-end
 // ==/UserScript==
 
 (function () {
     'use strict';
 
-    // 已处理过的视频，防止重复添加按钮
     const processed = new WeakSet();
 
-    // 创建复制按钮
-    function createCopyBtn(url) {
+    function addButton(video) {
+        if (processed.has(video)) return;
+        processed.add(video);
+
         const btn = document.createElement('button');
-        btn.innerText = '复制视频链接';
-        btn.style.marginTop = '8px';
-        btn.style.padding = '5px 10px';
-        btn.style.cursor = 'pointer';
+        btn.innerText = '复制MP4';
+        btn.style.display = 'block';
+        btn.style.margin = '10px 0';
+        btn.style.padding = '6px 12px';
         btn.style.background = '#409eff';
         btn.style.color = '#fff';
         btn.style.border = 'none';
         btn.style.borderRadius = '4px';
-        btn.style.fontSize = '14px';
+        btn.style.cursor = 'pointer';
 
         btn.onclick = function () {
+            let url = video.getAttribute('src'); // ⭐关键
+
+            console.log('获取到:', url);
+
+            if (!url) {
+                btn.innerText = '未找到 ❌';
+                return;
+            }
+
             GM_setClipboard(url);
+
             btn.innerText = '已复制 ✔';
             setTimeout(() => {
-                btn.innerText = '复制视频链接';
+                btn.innerText = '复制MP4';
             }, 2000);
         };
 
-        return btn;
+        video.insertAdjacentElement('afterend', btn);
     }
 
-    // 提取并处理视频
-    function processVideos() {
-        const videos = document.querySelectorAll('video');
-
-        videos.forEach(video => {
-            if (processed.has(video)) return;
-
-            let url = video.currentSrc || video.src;
-
-            // 如果video里没有，尝试source标签
-            if (!url) {
-                const source = video.querySelector('source');
-                if (source) url = source.src;
-            }
-
-            // 只处理 mp4
-            if (url && url.includes('.mp4')) {
-                processed.add(video);
-
-                const btn = createCopyBtn(url);
-
-                // 插入到视频下方
-                video.parentNode.insertBefore(btn, video.nextSibling);
-            }
-        });
+    function run() {
+        document.querySelectorAll('video').forEach(addButton);
     }
 
-    // 初次执行
-    processVideos();
+    // 初始
+    run();
 
-    // 监听动态加载（关键）
-    const observer = new MutationObserver(() => {
-        processVideos();
-    });
-
-    observer.observe(document.body, {
+    // 防止动态加载
+    new MutationObserver(run).observe(document.body, {
         childList: true,
         subtree: true
     });
