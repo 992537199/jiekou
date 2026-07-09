@@ -1,80 +1,115 @@
 // ==UserScript==
-// @name         页面MP4视频提取复制工具
+// @name         福利吧MP4视频复制按钮（修复版）
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  自动提取页面所有video标签mp4链接，每个视频下方添加复制按钮
+// @version      2.0
+// @description  针对wnflb2023论坛，提取r2video插件MP4，每个视频下方添加复制链接按钮
 // @author       You
 // @match        https://www.wnflb2023.com/*
-// @match        *://*/*
 // @grant        GM_setClipboard
-// @grant        GM_notification
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // 给每个video标签添加复制按钮
-    function addCopyBtnToVideo() {
-        // 获取页面全部视频元素
-        const videoList = document.querySelectorAll('video');
-        if (videoList.length === 0) return;
+    // 防止重复添加按钮的标记
+    const markClass = 'r2video_copy_btn_inserted';
 
-        videoList.forEach(video => {
-            // 跳过已添加过按钮的视频，防止重复生成
-            if (video.nextElementSibling && video.nextElementSibling.classList.contains('video-copy-btn-wrap')) return;
+    // 提取视频真实mp4地址
+    function getVideoMp4(videoEl) {
+        // 优先取video自身src
+        if (videoEl.src && videoEl.src.includes('.mp4')) {
+            return videoEl.src;
+        }
+        // 兼容<source src="xxx.mp4">子标签
+        const sourceList = videoEl.querySelectorAll('source');
+        for (const s of sourceList) {
+            if (s.src && s.src.includes('.mp4')) {
+                return s.src;
+            }
+        }
+        return null;
+    }
 
-            const mp4Url = video.src;
-            if (!mp4Url || !mp4Url.endsWith('.mp4')) return;
+    // 给所有未处理的video添加复制按钮
+    function insertCopyButton() {
+        const allVideos = document.querySelectorAll('.r2v-box video, video');
+        allVideos.forEach(video => {
+            // 已处理过直接跳过
+            if (video.classList.contains(markClass)) return;
+            const mp4Url = getVideoMp4(video);
+            if (!mp4Url) return;
 
-            // 创建按钮容器
-            const btnWrap = document.createElement('div');
-            btnWrap.className = 'video-copy-btn-wrap';
-            btnWrap.style.cssText = `
-                margin:8px 0 16px;
-            `;
+            // 标记已处理
+            video.classList.add(markClass);
 
-            // 创建复制按钮
+            // 按钮容器
+            const wrap = document.createElement('div');
+            wrap.style.margin = '10px 0 20px';
+            // 复制按钮
             const copyBtn = document.createElement('button');
-            copyBtn.innerText = '复制视频MP4链接';
+            copyBtn.textContent = '复制MP4视频直链';
             copyBtn.style.cssText = `
-                padding:6px 14px;
-                background:#0066cc;
-                color:#fff;
-                border:none;
-                border-radius:4px;
-                cursor:pointer;
-                font-size:14px;
+                padding: 6px 16px;
+                background: #007aff;
+                color: #fff;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
             `;
-            // hover样式
-            copyBtn.onmouseover = () => copyBtn.style.background = '#0052a3';
-            copyBtn.onmouseout = () => copyBtn.style.background = '#0066cc';
+            copyBtn.onmouseenter = () => copyBtn.style.background = '#005fc8';
+            copyBtn.onmouseleave = () => copyBtn.style.background = '#007aff';
 
-            // 点击复制逻辑
-            copyBtn.onclick = () => {
-                GM_setClipboard(mp4Url);
-                GM_notification({
-                    title: '复制成功',
-                    text: `视频链接已复制到剪贴板：\n${mp4Url}`,
-                    timeout: 2500
-                });
+            // 复制事件
+            copyBtn.onclick = async () => {
+                try {
+                    GM_setClipboard(mp4Url);
+                    // 页面内提示（替代不稳定GM通知）
+                    const tip = document.createElement('div');
+                    tip.textContent = '✅ 复制成功！';
+                    tip.style.cssText = 'color:green;margin-left:10px;display:inline-block;';
+                    wrap.appendChild(tip);
+                    setTimeout(() => tip.remove(), 1500);
+                } catch (err) {
+                    // 兜底原生剪贴板
+                    await navigator.clipboard.writeText(mp4Url);
+                    alert('链接已复制：\n' + mp4Url);
+                }
             };
 
-            btnWrap.appendChild(copyBtn);
-            // 插入到视频下方
-            video.parentNode.insertBefore(btnWrap, video.nextSibling);
+            wrap.appendChild(copyBtn);
+            // 插入视频下方
+            video.parentNode.insertBefore(wrap, video.nextSibling);
         });
     }
 
-    // 页面初次加载执行
-    window.addEventListener('load', addCopyBtnToVideo);
+    // 延时多次执行，适配插件延迟渲染
+    function delayRun() {
+        insertCopyButton();
+        setTimeout(insertCopyButton, 800);
+        setTimeout(insertCopyButton, 1500);
+        setTimeout(insertCopyButton, 3000);
+    }
 
-    // 监听页面动态加载内容（论坛滚动/弹窗加载视频）
-    const observer = new MutationObserver(mutations => {
-        addCopyBtnToVideo();
+    // 页面DOM加载完成先跑一次
+    document.addEventListener('DOMContentLoaded', delayRun);
+    window.addEventListener('load', delayRun);
+
+    // 监听页面动态新增内容（翻页、回复加载、插件动态插入视频）
+    const observer = new MutationObserver((mutList) => {
+        let needRun = false;
+        for (const mut of mutList) {
+            if (mut.addedNodes.length) {
+                needRun = true;
+                break;
+            }
+        }
+        if (needRun) insertCopyButton();
     });
     observer.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        attributes: false
     });
 
 })();
