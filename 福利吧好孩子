@@ -1,0 +1,3304 @@
+// ==UserScript== 
+// @name 福利吧！好孩子，看得见！ 
+// @namespace Aismo 
+// @version 1.0 
+// @description 福利吧！好孩子，看得见！：福利吧论坛百家姓暗号自动解码/高亮、资源预览、隐藏内容揭示、热帖高亮、头像勋章隐藏、解码历史与设置面板（由 Chrome 扩展移植为篡改猴脚本，已剔除 115 网盘模块） 
+// @author Aismo 
+// @icon data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text y="14" font-size="14">🔓</text></svg> 
+// @match *://*.wnflb.com/* 
+// @match *://wnflb.com/* 
+// @match *://*.wnflb2023.com/* 
+// @match *://wnflb2023.com/* 
+// @match *://*.wnflb2024.com/* 
+// @match *://wnflb2024.com/* 
+// @match *://*.wnflb2025.com/* 
+// @match *://wnflb2025.com/* 
+// @match *://*.wnflb2026.com/* 
+// @match *://wnflb2026.com/* 
+// @run-at document-idle 
+// @grant GM_setValue 
+// @grant GM_getValue 
+// @grant GM_xmlhttpRequest 
+// @grant GM_registerMenuCommand 
+// @connect whatslink.info 
+// ==/UserScript== 
+/* 福利吧！好孩子，看得见！ —— 百家姓暗号解码器（Chrome 扩展移植为篡改猴脚本，已剔除 115 网盘模块） */
+ (function () {
+  'use strict';
+  // § 1 映射表与解码工具 const NAME_MAP = {
+   "赵":"0","钱":"1","孙":"2","李":"3","周":"4","吴":"5","郑":"6","王":"7","冯":"8","陈":"9", "褚":"a","卫":"b","蒋":"c","沈":"d","韩":"e","杨":"f","朱":"g","秦":"h","尤":"i","许":"j", "何":"k","吕":"l","施":"m","张":"n","孔":"o","曹":"p","严":"q","华":"r","金":"s","魏":"t", "陶":"u","姜":"v","戚":"w","谢":"x","邹":"y","喻":"z", "福":"A","水":"B","窦":"C","章":"D","云":"E","苏":"F","潘":"G","葛":"H","奚":"I","范":"J", "彭":"K","郎":"L","鲁":"M","韦":"N","昌":"O","马":"P","苗":"Q","凤":"R","花":"S","方":"T", "俞":"U","任":"V","袁":"W","柳":"X","唐":"Y","罗":"Z", "薛":".","伍":"-","余":"_","米":"+","贝":"=","姚":"/","孟":"?","顾":"#","尹":"%","江":"&", "钟":"*","竺":":","赖":"|","卜":"|" 
+ }
+ ;
+  const ALL_NAMES = Object.keys(NAME_MAP);
+  const BJX_REGEX = new RegExp('[' + ALL_NAMES.join('') + ']{
+  8,
+ }
+ ', 'g');
+  function decode(str) {
+   if (typeof str !== 'string') return '';
+   let out = '';
+   for (const c of str.replace(/\s+/g, '')) out += (NAME_MAP[c] !== undefined) ? NAME_MAP[c] : c;
+   return out;
+ }
+  function buildMagnet(raw) {
+   const s = raw.trim();
+   if (/^magnet:\?/i.test(s)) return s;
+   const hashMatch = s.match(/^([a-fA-F0-9]{
+   32,40
+  }
+  )(.*)/);
+   if (hashMatch) {
+    const hash = hashMatch[1], params = hashMatch[2];
+    if (params.startsWith('&') || params.startsWith('?')) return 'magnet:?xt=urn:btih:' + hash + params;
+    return 'magnet:?xt=urn:btih:' + hash;
+  }
+   const clean = s.replace(/[^a-fA-F0-9]/g, '');
+   if (clean.length >= 32 && clean.length <= 40) return 'magnet:?xt=urn:btih:' + clean;
+   return s;
+ }
+  function detectType(s) {
+   if (!s) return 'text';
+   if (/^magnet:\?/i.test(s)) return 'magnet';
+   if (/^ed2k:\/\//i.test(s)) return 'ed2k';
+   if (/^thunder:\/\//i.test(s)) return 'thunder';
+   if (/^https?:\/\//i.test(s)) return 'url';
+   if (/^[a-fA-F0-9]{
+   32,40
+  }
+  $/.test(s.trim())) return 'hash';
+   return 'text';
+ }
+  function extractBtih(s) {
+   const m = s.match(/urn:btih:([a-fA-F0-9]{
+   40
+  }
+  )/);
+   return m ? m[1].toLowerCase() : null;
+ }
+  function formatSize(b) {
+   if (!b) return '未知';
+   const u = ['B','KB','MB','GB','TB'];
+   let i = 0;
+   while (b >= 1024 && i < u.length - 1) {
+    b /= 1024;
+    i++;
+  }
+   return b.toFixed(2) + ' ' + u[i];
+ }
+  // § 2 设置 & 历史（替代 chrome.storage） function getSettings() {
+   return {
+    enabled: GM_getValue('enabled', true), hotReply: GM_getValue('hotReply', 50), hotView: GM_getValue('hotView', 1000), hotMode: GM_getValue('hotMode', 'or'), hideAvatarMedals: GM_getValue('hideAvatarMedals', false), titleHighlightEnabled: GM_getValue('titleHighlightEnabled', true), titleHighlightColor: GM_getValue('titleHighlightColor', '#ff6600'), encBgEnabled: GM_getValue('encBgEnabled', true), encColor: GM_getValue('encColor', '#00fbff'), widescreen: GM_getValue('widescreen', true), autoSign: GM_getValue('autoSign', true), signUrl: GM_getValue('signUrl', 'plugin.php?id=fx_checkin:list') 
+  }
+  ;
+ }
+  function setSetting(k, v) {
+   try {
+    GM_setValue(k, v);
+  }
+   catch (e) {
+  }
+ }
+  function getHistory() {
+   const l = GM_getValue('history', []);
+   return Array.isArray(l) ? l : [];
+ }
+  function clearHistory() {
+   GM_setValue('history', []);
+   refreshHistoryBadge();
+ }
+  function saveHistory(magnet, name, type) {
+   try {
+    if (type === 'url') return;
+    let list = getHistory();
+    const btih = extractBtih(magnet) || magnet;
+    const dedupKey = btih || magnet;
+    const idx = list.findIndex(e => (extractBtih(e.magnet) || e.magnet) === dedupKey);
+    if (idx >= 0) {
+     if (name && list[idx].name !== name) {
+      list[idx].name = name;
+      GM_setValue('history', list);
+    }
+     return;
+   }
+    list.unshift({
+     magnet, name: name || '', type, timestamp: Date.now() 
+   }
+   );
+    if (list.length > 50) list = list.slice(0, 50);
+    GM_setValue('history', list);
+    refreshHistoryBadge();
+  }
+   catch (e) {
+  }
+ }
+  // § 3 样式注入 function injectContentStyles() {
+   if (document.getElementById('bjx-styles')) return;
+   const s = document.createElement('style');
+   s.id = 'bjx-styles';
+   s.textContent = ` .bjx-enc{
+   border-radius:3px;
+   padding:1px 3px;
+   cursor:pointer;
+   transition:background .2s,border-color .2s;
+   display:inline
+  }
+   .bjx-enc:hover{
+   filter:brightness(0.92)
+  }
+   .bjx-modal{
+   position:fixed;
+   z-index:2147483647;
+   background:#1a1a2e;
+   color:#e0e0e0;
+   border:1px solid #4a4a8a;
+   border-radius:12px;
+    box-shadow:0 12px 40px rgba(0,0,0,.6);
+   font-family:'Segoe UI','Microsoft YaHei',sans-serif;
+   font-size:13px;
+    line-height:1.5;
+   pointer-events:all;
+   width:600px;
+   max-width:96vw;
+   max-height:86vh;
+   overflow:hidden;
+   display:flex;
+   flex-direction:column;
+  }
+   .bjx-modal-hd{
+   padding:12px 16px;
+   background:linear-gradient(90deg,#222,#444);
+   color:#fff;
+   cursor:move;
+    display:flex;
+   justify-content:space-between;
+   align-items:center;
+   border-radius:12px 12px 0 0;
+   flex-shrink:0;
+  }
+   .bjx-modal-title{
+   font-size:14px;
+   font-weight:bold;
+   display:flex;
+   align-items:center;
+   gap:7px
+  }
+   .bjx-modal-close{
+   cursor:pointer;
+   font-size:20px;
+   line-height:1;
+   padding:0 4px;
+   color:#aaa;
+   transition:color .2s
+  }
+   .bjx-modal-close:hover{
+   color:#fff
+  }
+   .bjx-modal-body{
+   padding:16px;
+   overflow-y:auto;
+   flex:1;
+  }
+   .bjx-magnet-row{
+   display:flex;
+   align-items:flex-start;
+   gap:8px;
+   background:#0d1117;
+   border:1px solid #2a2a4e;
+    border-radius:8px;
+   padding:10px 12px;
+   margin-bottom:12px;
+  }
+   .bjx-magnet-text{
+   flex:1;
+   font-family:monospace;
+   font-size:12px;
+   color:#c8e6c9;
+   word-break:break-all;
+   line-height:1.6
+  }
+   .bjx-btn{
+   padding:5px 12px;
+   border-radius:6px;
+   border:none;
+   cursor:pointer;
+   font-size:12px;
+    font-family:'Segoe UI','Microsoft YaHei',sans-serif;
+   transition:all .2s;
+   font-weight:500;
+   white-space:nowrap
+  }
+   .bjx-btn-copy{
+   background:#4a90d9;
+   color:#fff
+  }
+  .bjx-btn-copy:hover{
+   background:#357abd
+  }
+   .bjx-btn-thunder{
+   background:#f0ad4e;
+   color:#fff
+  }
+  .bjx-btn-thunder:hover{
+   background:#ec971f
+  }
+   .bjx-info-row{
+   display:flex;
+   gap:16px;
+   margin-bottom:12px;
+   flex-wrap:wrap;
+  }
+   .bjx-info-item{
+   display:flex;
+   flex-direction:column;
+   gap:2px;
+  }
+   .bjx-info-label{
+   font-size:11px;
+   color:#666;
+   text-transform:uppercase;
+   letter-spacing:.4px
+  }
+   .bjx-info-value{
+   font-size:13px;
+   color:#e0e0e0;
+   font-weight:500
+  }
+   .bjx-screenshots{
+   display:grid;
+   grid-template-columns:repeat(3,1fr);
+   gap:8px;
+   margin-top:8px;
+   width:100%;
+  }
+   .bjx-screenshots img{
+   width:100%;
+   border-radius:8px;
+   display:block;
+   cursor:zoom-in;
+   transition:transform .2s
+  }
+   .bjx-screenshots img:hover{
+   transform:scale(1.02)
+  }
+   .bjx-loading{
+   text-align:center;
+   padding:30px;
+   color:#666
+  }
+   .bjx-spinner{
+   display:inline-block;
+   width:28px;
+   height:28px;
+   border:3px solid rgba(74,144,217,.15);
+   border-top-color:#4a90d9;
+   border-radius:50%;
+   animation:bjx-spin .8s linear infinite;
+   margin-bottom:10px
+  }
+   @keyframes bjx-spin{
+   to{
+    transform:rotate(360deg)
+   }
+  }
+   .bjx-dots{
+   display:flex;
+   align-items:center;
+   justify-content:center;
+   gap:8px;
+   padding:12px 0
+  }
+   .bjx-dots span{
+   display:block;
+   width:8px;
+   height:8px;
+   border-radius:50%;
+   background:#a78bfa;
+   animation:bjx-dot-bounce 1.2s cubic-bezier(.645,.045,.355,1) infinite
+  }
+   .bjx-dots span:nth-child(2){
+   animation-delay:.15s
+  }
+   .bjx-dots span:nth-child(3){
+   animation-delay:.30s
+  }
+   @keyframes bjx-dot-bounce{
+   0%,100%{
+    transform:translateY(0) scale(1);
+    opacity:.9
+   }
+   45%{
+    transform:translateY(-12px) scale(.85);
+    opacity:.5
+   }
+  }
+   @media (prefers-reduced-motion:reduce){
+   .bjx-spinner,.bjx-dots span{
+    animation:bjx-fade 2s ease-in-out infinite!important
+   }
+   @keyframes bjx-fade{
+    0%,100%{
+     opacity:1
+    }
+    50%{
+     opacity:.35
+    }
+   }
+  }
+   .bjx-error{
+   background:#2d1a1a;
+   border:1px solid #4a2a2a;
+   border-radius:8px;
+   padding:12px;
+   color:#ef9a9a;
+   font-size:13px
+  }
+   #bjx-dock{
+   position:fixed;
+   left:14px;
+   bottom:64px;
+   z-index:2147483645;
+   display:flex;
+   flex-direction:column;
+   gap:10px;
+   align-items:flex-start
+  }
+   .bjx-dock-icon{
+   position:relative;
+   width:44px;
+   height:44px;
+   border-radius:50%;
+    background:linear-gradient(135deg,#1a1a2e,#16213e);
+   color:#a0c4ff;
+   border:1px solid #4a4a8a;
+   cursor:pointer;
+    font-size:18px;
+   box-shadow:0 4px 16px rgba(0,0,0,.5);
+   display:flex;
+   align-items:center;
+   justify-content:center;
+    transition:transform .2s,background .2s,box-shadow .2s;
+   user-select:none
+  }
+   .bjx-dock-icon:hover{
+   transform:scale(1.06);
+   background:linear-gradient(135deg,#243b55,#16213e);
+   color:#fff
+  }
+   .bjx-dock-badge{
+   position:absolute;
+   top:-4px;
+   right:-4px;
+   background:#ff6b6b;
+   color:#fff;
+   border-radius:10px;
+   padding:1px 5px;
+   font-size:11px;
+   font-weight:bold;
+   min-width:16px;
+   text-align:center;
+   line-height:1.3;
+   box-shadow:0 1px 4px rgba(0,0,0,.4)
+  }
+   .bjx-dock-dropdown{
+   position:absolute;
+   left:54px;
+   bottom:0;
+   width:360px;
+   max-width:calc(100vw - 80px);
+   max-height:340px;
+   overflow-y:auto;
+    background:#1a1a2e;
+   border:1px solid #4a4a8a;
+   border-radius:10px;
+   box-shadow:0 8px 32px rgba(0,0,0,.6);
+    z-index:2147483647;
+   padding:4px 0;
+   opacity:0;
+   visibility:hidden;
+   transform:translateX(-6px);
+    transition:opacity .08s ease,transform .1s ease,visibility .1s;
+   pointer-events:none
+  }
+   .bjx-dock-dropdown.visible{
+   opacity:1;
+   visibility:visible;
+   transform:translateX(0);
+   pointer-events:auto
+  }
+   .bjx-dock-dropdown::before{
+   content:'';
+   position:absolute;
+   left:-16px;
+   top:-10px;
+   bottom:-10px;
+   width:16px;
+   background:transparent
+  }
+   .bjx-dropdown-item{
+   padding:8px 12px;
+   cursor:pointer;
+   border-bottom:1px solid #2a2a4e;
+    display:flex;
+   flex-direction:row;
+   align-items:center;
+   gap:8px;
+   transition:background .15s
+  }
+   .bjx-dropdown-item:last-child{
+   border-bottom:none
+  }
+   .bjx-dropdown-item:hover{
+   background:#2a2a4e
+  }
+   .bjx-dd-info{
+   flex:1;
+   min-width:0;
+   display:flex;
+   flex-direction:column;
+   gap:2px
+  }
+   .bjx-dd-text{
+   font-size:12px;
+   color:#a0c4ff;
+   font-family:monospace;
+   word-break:break-all;
+   line-height:1.4
+  }
+   .bjx-dd-meta{
+   font-size:11px;
+   color:#666;
+   font-family:monospace;
+   overflow:hidden;
+    text-overflow:ellipsis;
+   white-space:nowrap
+  }
+   .bjx-dd-preview-btn{
+   flex-shrink:0;
+   padding:3px 8px;
+   background:#7c4dff;
+   color:#fff;
+    border:none;
+   border-radius:4px;
+   font-size:11px;
+   cursor:pointer;
+   font-family:'Segoe UI','Microsoft YaHei',sans-serif;
+    transition:background .15s;
+   font-weight:500
+  }
+   .bjx-dd-preview-btn:hover{
+   background:#6c3de8
+  }
+   .bjx-dd-images{
+   border-top:1px solid #2a2a4e;
+   padding:8px 12px;
+   margin-top:2px
+  }
+   .bjx-dd-images-title{
+   font-size:12px;
+   color:#8aa0c8;
+   margin-bottom:8px;
+   user-select:none
+  }
+   .bjx-dd-images-grid{
+   display:grid;
+   grid-template-columns:repeat(4,1fr);
+   gap:6px;
+   max-height:240px;
+   overflow-y:auto
+  }
+   .bjx-dd-thumb{
+   display:block;
+   aspect-ratio:1/1;
+   overflow:hidden;
+   border-radius:6px;
+   border:1px solid #2a2a4e;
+   background:#0d1117
+  }
+   .bjx-dd-thumb img{
+   width:100%;
+   height:100%;
+   object-fit:cover;
+   display:block;
+   cursor:zoom-in;
+   transition:transform .2s
+  }
+   #bjx-lightbox{
+   position:fixed;
+   inset:0;
+   z-index:2147483647;
+   background:rgba(0,0,0,.82);
+    display:flex;
+   align-items:center;
+   justify-content:center;
+   padding:4vh 4vw;
+    opacity:0;
+   visibility:hidden;
+   transition:opacity .15s ease,visibility .15s;
+   pointer-events:none
+  }
+   #bjx-lightbox.visible{
+   opacity:1;
+   visibility:visible;
+   pointer-events:auto;
+   cursor:zoom-out
+  }
+   #bjx-lightbox img{
+   max-width:92vw;
+   max-height:92vh;
+   border-radius:8px;
+   box-shadow:0 12px 48px rgba(0,0,0,.7);
+   background:#111
+  }
+   .bjx-dd-thumb:hover img{
+   transform:scale(1.08)
+  }
+   .bjx-dd-links{
+   border-top:1px solid #2a2a4e;
+   padding:8px 12px;
+   margin-top:2px;
+   max-height:220px;
+   overflow-y:auto
+  }
+   .bjx-dd-links-title{
+   font-size:12px;
+   color:#8aa0c8;
+   margin:2px 0 6px;
+   user-select:none
+  }
+   .bjx-inline-btn{
+   display:inline-block;
+   margin-left:5px;
+   padding:1px 8px;
+   background:#7c4dff;
+   color:#fff;
+    border:none;
+   border-radius:4px;
+   font-size:11px;
+   cursor:pointer;
+   vertical-align:middle;
+   transition:all .2s
+  }
+   .bjx-inline-btn:hover{
+   background:#6c3de8
+  }
+   .bjx-reveal{
+   background:transparent;
+   border:1px dashed #f0a500;
+   border-radius:3px;
+   padding:1px 3px;
+   color:#333;
+   display:inline;
+   transition:all .2s
+  }
+   .bjx-reveal:hover{
+   filter:brightness(.92)
+  }
+   .bjx-link-reveal{
+   background:transparent;
+   border:1px dashed #f0a500;
+   border-radius:3px;
+   padding:1px 5px;
+   color:#333;
+   font-size:11px;
+   font-family:monospace;
+   word-break:break-all;
+   cursor:pointer;
+   display:inline;
+   transition:all .2s
+  }
+   .bjx-link-reveal:hover{
+   filter:brightness(.92)
+  }
+   a.xst.bjx-anim-title {
+    position: relative !important;
+   display: inline-block !important;
+   background: transparent !important;
+    border: none !important;
+   border-radius: 6px !important;
+   padding: 4px 10px !important;
+    margin: 2px 0 !important;
+   overflow: hidden !important;
+   z-index: 1 !important;
+    text-decoration: none !important;
+    transition: transform 0.1s ease !important;
+   transform-style: preserve-3d !important;
+  }
+   a.xst.bjx-anim-title:hover {
+   color:#ffffff !important;
+   background:#003366 !important;
+  }
+   .bjx-hot-thread a.xst {
+    color: var(--bjx-title-hl, #ff6600) !important;
+   font-weight: bold !important;
+  }
+   .bjx-hot-thread a.xst:hover {
+   color:#000000 !important;
+   background:var(--bjx-title-hl, #ff6600) !important;
+  }
+   tbody.bjx-hot-thread, tbody.bjx-hot-thread tr {
+   background: transparent !important;
+  }
+   .bjx-hot-reply{
+   color:#e65100!important;
+   font-weight:bold!important
+  }
+   .bjx-hot-view{
+   color:#e65100!important;
+   font-weight:bold!important
+  }
+   .bjx-hide-avatar-medals td.pls .avatar,.bjx-hide-avatar-medals td.pls .avatar *{
+   display:none!important
+  }
+   .bjx-hide-avatar-medals td.pls .p_pop.blk{
+   display:none!important
+  }
+   .bjx-hide-avatar-medals td.pls .md_ctrl{
+   display:none!important
+  }
+  /* ===== 宽屏优化 (Discuz! X3.4) ===== */
+   body.bjx-widescreen .wp, body.bjx-widescreen #wp {
+   width:auto !important;
+   max-width:1280px !important;
+   margin:0 auto !important;
+   padding-left:20px !important;
+   padding-right:20px !important;
+  }
+   body.bjx-widescreen #ct, body.bjx-widescreen .ct2, body.bjx-widescreen .ct3, body.bjx-widescreen .bm {
+   width:auto !important;
+   max-width:100% !important;
+  }
+   body.bjx-widescreen .mn {
+   width:auto !important;
+   min-width:0 !important;
+  }
+   body.bjx-widescreen .sd {
+   float:right !important;
+  }
+   body.bjx-widescreen .tl, body.bjx-widescreen #threadlisttableid, body.bjx-widescreen .t_f, body.bjx-widescreen .message {
+   max-width:none !important;
+  }
+  /* 选中解码浮钮 */
+   #bjx-sel-btn{
+   position:absolute;
+   z-index:2147483647;
+   background:#7c4dff;
+   color:#fff;
+   border:none;
+   border-radius:6px;
+    padding:4px 10px;
+   font-size:12px;
+   cursor:pointer;
+   box-shadow:0 4px 16px rgba(0,0,0,.5);
+   font-family:'Segoe UI','Microsoft YaHei',sans-serif
+  }
+   #bjx-sel-btn:hover{
+   background:#6c3de8
+  }
+   `;
+   document.head.appendChild(s);
+ }
+  // 浮动面板样式（作用域限定在 #bjx-panel，避免污染论坛页面） function injectPanelStyles() {
+   if (document.getElementById('bjx-panel-styles')) return;
+   const s = document.createElement('style');
+   s.id = 'bjx-panel-styles';
+   s.textContent = ` #bjx-panel, #bjx-panel * {
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+  }
+   #bjx-panel {
+    position:fixed;
+    z-index:2147483645;
+    font-family:'Segoe UI','Microsoft YaHei',sans-serif;
+    font-size:13px;
+  }
+   #bjx-panel textarea {
+    width:100%;
+    height:76px;
+    background:#1a1a2e;
+    border:1px solid #2a2a4e;
+    border-radius:8px;
+    color:#e0e0e0;
+    font-size:12px;
+    padding:8px 10px;
+    resize:vertical;
+    font-family:inherit;
+    outline:none;
+    transition:border-color .2s;
+  }
+   #bjx-panel textarea:focus {
+    border-color:#4a90d9;
+  }
+   #bjx-panel textarea::placeholder {
+    color:#444;
+  }
+   #bjx-panel .btn-row {
+    display:flex;
+    gap:8px;
+    margin-top:8px;
+    flex-wrap:wrap;
+  }
+   #bjx-panel .btn {
+    padding:6px 12px;
+    border-radius:7px;
+    border:none;
+    cursor:pointer;
+    font-size:12px;
+    font-family:inherit;
+    font-weight:500;
+    transition:all .2s;
+  }
+   #bjx-panel .btn-primary {
+    background:#4a90d9;
+    color:#fff;
+    flex:1;
+  }
+   #bjx-panel .btn-primary:hover {
+    background:#357abd;
+  }
+   #bjx-panel .btn-secondary {
+    background:#333;
+    color:#aaa;
+  }
+   #bjx-panel .btn-secondary:hover {
+    background:#444;
+    color:#fff;
+  }
+   #bjx-panel .btn-preview {
+    background:#7c4dff;
+    color:#fff;
+  }
+   #bjx-panel .btn-preview:hover {
+    background:#6c3de8;
+  }
+   #bjx-panel .btn-copy {
+    background:#4a90d9;
+    color:#fff;
+  }
+   #bjx-panel .btn-copy:hover {
+    background:#357abd;
+  }
+   #bjx-panel .btn-thunder {
+    background:#f0ad4e;
+    color:#fff;
+  }
+   #bjx-panel .btn-thunder:hover {
+    background:#ec971f;
+  }
+   #bjx-panel .section-title {
+    font-size:11px;
+    color:#555;
+    margin-bottom:8px;
+    text-transform:uppercase;
+    letter-spacing:.5px;
+  }
+   #bjx-panel .rescan-btn {
+    width:100%;
+    padding:8px;
+    margin-bottom:10px;
+    background:linear-gradient(135deg,#1a3a5c,#1a4a7a);
+    color:#a0c4ff;
+    border:1px solid #2a5a9a;
+    border-radius:8px;
+    cursor:pointer;
+    font-size:13px;
+    font-family:inherit;
+    transition:all .2s;
+  }
+   #bjx-panel .rescan-btn:hover {
+    background:linear-gradient(135deg,#1e4a7a,#1e5a9a);
+  }
+   #bjx-panel .result-magnet {
+    margin-top:10px;
+    background:#0d1117;
+    border:1px solid #2a2a4e;
+    border-radius:8px;
+    padding:8px 10px;
+    font-family:monospace;
+    font-size:12px;
+    color:#c8e6c9;
+    word-break:break-all;
+    line-height:1.6;
+    display:none;
+  }
+   #bjx-panel .result-magnet.visible {
+    display:block;
+  }
+   #bjx-panel .type-badge {
+    display:inline-block;
+    padding:2px 8px;
+    border-radius:10px;
+    font-size:11px;
+    font-weight:bold;
+    margin-bottom:6px;
+  }
+   #bjx-panel .t-magnet, #bjx-panel .t-hash {
+    background:#ff6b6b;
+    color:#fff;
+  }
+   #bjx-panel .t-ed2k {
+    background:#4ecdc4;
+    color:#fff;
+  }
+   #bjx-panel .t-thunder {
+    background:#45b7d1;
+    color:#fff;
+  }
+   #bjx-panel .t-url {
+    background:#96ceb4;
+    color:#fff;
+  }
+   #bjx-panel .t-text {
+    background:#555;
+    color:#fff;
+  }
+   #bjx-panel .preview-spinner {
+    display:inline-block;
+    width:24px;
+    height:24px;
+    border:3px solid rgba(160,196,255,.15);
+    border-top-color:#7c4dff;
+    border-radius:50%;
+    animation:spin .8s linear infinite;
+    margin-bottom:8px;
+  }
+   @keyframes spin {
+    to {
+     transform:rotate(360deg);
+   }
+  }
+   #bjx-panel .preview-info {
+    margin-bottom:10px;
+  }
+   #bjx-panel .preview-info-row {
+    display:flex;
+    gap:12px;
+    flex-wrap:wrap;
+    margin-bottom:6px;
+  }
+   #bjx-panel .preview-info-item {
+    display:flex;
+    flex-direction:column;
+    gap:1px;
+  }
+   #bjx-panel .pil {
+    font-size:10px;
+    color:#555;
+    text-transform:uppercase;
+  }
+   #bjx-panel .piv {
+    font-size:12px;
+    color:#e0e0e0;
+    font-weight:500;
+  }
+   #bjx-panel .preview-name {
+    font-size:13px;
+    color:#a0c4ff;
+    font-weight:500;
+    margin-bottom:8px;
+    word-break:break-all;
+  }
+   #bjx-panel .preview-shots {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:6px;
+  }
+   #bjx-panel .preview-shots img {
+    width:100%;
+    border-radius:6px;
+    display:block;
+  }
+   #bjx-panel .preview-error {
+    background:#2d1a1a;
+    border:1px solid #4a2a2a;
+    border-radius:6px;
+    padding:10px;
+    color:#ef9a9a;
+    font-size:12px;
+  }
+   #bjx-panel .preview-empty {
+    color:#444;
+    font-size:12px;
+    padding:10px 0;
+  }
+   #bjx-panel .switch {
+    position:relative;
+    display:inline-block;
+    width:40px;
+    height:22px;
+  }
+   #bjx-panel .switch input {
+    opacity:0;
+    width:0;
+    height:0;
+  }
+   #bjx-panel .slider {
+    position:absolute;
+    cursor:pointer;
+    top:0;
+    left:0;
+    right:0;
+    bottom:0;
+    background:#333;
+    border-radius:22px;
+    transition:.3s;
+  }
+   #bjx-panel .slider:before {
+    position:absolute;
+    content:"";
+    height:16px;
+    width:16px;
+    left:3px;
+    bottom:3px;
+    background:#fff;
+    border-radius:50%;
+    transition:.3s;
+  }
+   #bjx-panel .switch input:checked + .slider {
+    background:#4a90d9;
+  }
+   #bjx-panel .switch input:checked + .slider:before {
+    transform:translateX(18px);
+  }
+   #bjx-panel .bjx-history-item {
+    display:flex;
+    align-items:center;
+    gap:4px;
+    padding:6px 0;
+    border-bottom:1px solid #1e2a3a;
+    cursor:pointer;
+  }
+   #bjx-panel .bjx-history-item:last-child {
+    border-bottom:none;
+  }
+   #bjx-panel .bjx-history-name {
+    font-size:11px;
+    color:#a0c4ff;
+    flex:1;
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+   #bjx-panel .bjx-history-btn {
+    flex-shrink:0;
+    padding:2px 7px;
+    background:#7c4dff;
+    color:#fff;
+    border:none;
+    border-radius:4px;
+    font-size:10px;
+    cursor:pointer;
+  }
+   #bjx-panel input[type=number], #bjx-panel input[type=text] {
+    width:100%;
+    background:#1a1a2e;
+    border:1px solid #2a2a4e;
+    border-radius:6px;
+    color:#e0e0e0;
+    padding:6px 10px;
+    font-size:12px;
+    font-family:inherit;
+    outline:none;
+    box-sizing:border-box;
+  }
+   #bjx-panel .mode-btn {
+    flex:1;
+    background:#333;
+    color:#aaa;
+  }
+   #bjx-panel .mode-btn.active {
+    background:#4a90d9;
+    color:#fff;
+  }
+   #bjx-panel a {
+    color:#4a90d9;
+    text-decoration:none;
+  }
+   #bjx-gear {
+    position:fixed;
+    left:14px;
+    bottom:14px;
+    z-index:2147483645;
+    width:44px;
+    height:44px;
+    border-radius:50%;
+    background:linear-gradient(135deg,#1a1a2e,#16213e);
+    color:#a0c4ff;
+    border:1px solid #4a4a8a;
+    cursor:pointer;
+    font-size:20px;
+    box-shadow:0 4px 16px rgba(0,0,0,.5);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+   #bjx-gear:hover {
+    transform:scale(1.06);
+  }
+   #bjx-panel-modal {
+    position:fixed;
+    left:14px;
+    bottom:70px;
+    width:400px;
+    max-width:calc(100vw - 28px);
+    max-height:80vh;
+    overflow-y:auto;
+    background:#0d1117;
+    color:#e0e0e0;
+    border:1px solid #2a2a4e;
+    border-radius:12px;
+    box-shadow:0 12px 40px rgba(0,0,0,.6);
+    font-family:'Segoe UI','Microsoft YaHei',sans-serif;
+    font-size:13px;
+    display:none;
+  }
+   #bjx-panel-modal.visible {
+    display:block;
+  }
+   #bjx-panel-modal::-webkit-scrollbar {
+    width:6px;
+  }
+   #bjx-panel-modal::-webkit-scrollbar-thumb {
+    background:#333;
+    border-radius:3px;
+  }
+   #bjx-panel .p-header {
+    background:linear-gradient(135deg,#1a1a2e,#16213e);
+    padding:12px 16px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    border-bottom:1px solid #2a2a4e;
+  }
+   #bjx-panel .p-logo-text {
+    font-size:15px;
+    font-weight:bold;
+    color:#a0c4ff;
+  }
+   #bjx-panel .p-logo-sub {
+    font-size:11px;
+    color:#555;
+  }
+   #bjx-panel .p-status {
+    background:#111827;
+    padding:8px 16px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    border-bottom:1px solid #1e2a3a;
+  }
+   #bjx-panel .p-status-text {
+    color:#666;
+    font-size:12px;
+  }
+   #bjx-panel .p-count {
+    background:#ff6b6b;
+    color:#fff;
+    border-radius:12px;
+    padding:2px 9px;
+    font-size:12px;
+    font-weight:bold;
+    min-width:28px;
+    text-align:center;
+  }
+   #bjx-panel .p-count.zero {
+    background:#333;
+  }
+   #bjx-panel .p-section {
+    padding:12px 16px;
+    border-bottom:1px solid #1e2a3a;
+  }
+   #bjx-panel .p-footer {
+    padding:8px 16px;
+    text-align:center;
+    color:#333;
+    font-size:11px;
+  }
+   `;
+   document.head.appendChild(s);
+ }
+  // § 4 复制工具 function copyText(text) {
+   if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+  }
+   else {
+    fallbackCopy(text);
+  }
+ }
+  function fallbackCopy(text) {
+   try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;
+   top:-9999px;
+   left:-9999px;
+   opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  }
+   catch (e) {
+  }
+ }
+  // § 5 资源预览（替代 background.js 的 whatslink 调用） const previewCache = new Map();
+  // 内存缓存，TTL 30 分钟 const PREVIEW_TTL = 30 * 60 * 1000;
+  const PREVIEW_TIMEOUT = 8000;
+  function renderPreviewHtml(data) {
+   try {
+    let html = '';
+    if (data.name) html += `<div class="bjx-info-row"><div class="bjx-info-item" style="flex:1;
+   min-width:200px"><span class="bjx-info-label">资源名称</span><span class="bjx-info-value">${
+    data.name
+   }
+   </span></div></div>`;
+    html += `<div class="bjx-info-row"> <div class="bjx-info-item"><span class="bjx-info-label">大小</span><span class="bjx-info-value">${
+    formatSize(data.size)
+   }
+   </span></div> <div class="bjx-info-item"><span class="bjx-info-label">文件数量</span><span class="bjx-info-value">${
+    data.count || 0
+   }
+    个</span></div>`;
+    if (data.file_type) html += `<div class="bjx-info-item"><span class="bjx-info-label">类型</span><span class="bjx-info-value">${
+    data.file_type
+   }
+   </span></div>`;
+    html += '</div>';
+    if (data.screenshots && data.screenshots.length) {
+     html += '<div style="font-size:11px;
+    color:#666;
+    margin-bottom:6px;
+    text-transform:uppercase;
+    letter-spacing:.4px">预览截图</div><div class="bjx-screenshots">';
+     data.screenshots.slice(0, 3).forEach(s => {
+      html += `<img src="${
+      s.screenshot
+     }
+     " loading="lazy" onerror="this.style.display='none'">`;
+    }
+    );
+     html += '</div>';
+   }
+    if (data.files && data.files.length) {
+     html += '<div style="font-size:11px;
+    color:#666;
+    margin-bottom:6px;
+    margin-top:8px;
+    text-transform:uppercase;
+    letter-spacing:.4px">文件列表</div>';
+     html += '<div style="max-height:180px;
+    overflow-y:auto;
+    background:#0d1117;
+    border-radius:8px;
+    padding:6px 10px">';
+     data.files.slice(0, 30).forEach(f => {
+      html += `<div style="font-size:11px;
+     color:#c8e6c9;
+     padding:3px 0;
+     border-bottom:1px solid #1e2a3a;
+     display:flex;
+     justify-content:space-between;
+     gap:8px"><span style="word-break:break-all;
+     flex:1">${
+      f.name
+     }
+     </span><span style="color:#666;
+     white-space:nowrap">${
+      formatSize(f.length)
+     }
+     </span></div>`;
+    }
+    );
+     if (data.files.length > 30) html += `<div style="font-size:11px;
+    color:#555;
+    padding:4px 0;
+    text-align:center">… 共 ${
+     data.files.length
+    }
+     个文件</div>`;
+     html += '</div>';
+   }
+    return html;
+  }
+   catch (e) {
+    return '<div class="bjx-error">⚠️ 渲染资源信息失败</div>';
+  }
+ }
+  function fetchPreview(magnet, container) {
+   if (previewCache.has(magnet)) {
+    const c = previewCache.get(magnet);
+    if (Date.now() - c.t < PREVIEW_TTL) {
+     try {
+      container.innerHTML = c.html;
+    }
+     catch (e) {
+    }
+     return;
+   }
+    previewCache.delete(magnet);
+  }
+   try {
+    container.innerHTML = '<div class="bjx-loading"><div class="bjx-spinner"></div><div class="bjx-dots"><span></span><span></span><span></span></div><div>正在查询资源信息…</div></div>';
+  }
+   catch (e) {
+  }
+   let settled = false;
+   function resolve(html) {
+    if (settled) return;
+    settled = true;
+    try {
+     container.innerHTML = html;
+   }
+    catch (e) {
+   }
+  }
+   const timer = setTimeout(() => {
+    if (!settled) resolve('<div class="bjx-error">⚠️ 查询超时（' + (PREVIEW_TIMEOUT/1000) + '秒），请稍后重试</div>');
+  }
+  , PREVIEW_TIMEOUT);
+   GM_xmlhttpRequest({
+    method: 'GET', url: 'https://whatslink.info/api/v1/link?url=' + encodeURIComponent(magnet), headers: {
+     'Accept': 'application/json' 
+   }
+   , timeout: PREVIEW_TIMEOUT, onload: function (resp) {
+     clearTimeout(timer);
+     if (settled) return;
+     try {
+      const data = JSON.parse(resp.responseText);
+      if (data && data.data && data.data.name) {
+       const html = renderPreviewHtml(data.data);
+       previewCache.set(magnet, {
+        html, t: Date.now() 
+      }
+      );
+       resolve(html);
+       saveHistory(magnet, data.data.name, 'magnet');
+     }
+      else {
+       resolve('<div class="bjx-error">⚠️ ' + ((data && data.error) || '未找到资源信息') + '</div>');
+     }
+    }
+     catch (e) {
+      resolve('<div class="bjx-error">⚠️ 解析失败</div>');
+    }
+   }
+   , onerror: function () {
+     clearTimeout(timer);
+     if (!settled) resolve('<div class="bjx-error">⚠️ 网络请求失败</div>');
+   }
+   , ontimeout: function () {
+     clearTimeout(timer);
+     if (!settled) resolve('<div class="bjx-error">⚠️ 查询超时</div>');
+   }
+  }
+  );
+ }
+  // § 6 预览弹窗（剔除 115 添加离线按钮） let currentTooltip = null;
+  function makeDraggable(el, handle) {
+   let dragging = false, ox = 0, oy = 0;
+   handle.addEventListener('mousedown', (e) => {
+    dragging = true;
+    ox = e.clientX - el.offsetLeft;
+    oy = e.clientY - el.offsetTop;
+    e.preventDefault();
+  }
+  );
+   document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    el.style.left = (e.clientX - ox) + 'px';
+    el.style.top = (e.clientY - oy) + 'px';
+  }
+  );
+   document.addEventListener('mouseup', () => {
+    dragging = false;
+  }
+  );
+ }
+  function closeModal() {
+   if (currentTooltip) {
+    try {
+     currentTooltip.remove();
+   }
+    catch (e) {
+   }
+    currentTooltip = null;
+  }
+ }
+  function showPreviewModal(magnet, anchor) {
+   closeModal();
+   try {
+    const modal = document.createElement('div');
+    modal.className = 'bjx-modal';
+    let initLeft = 100, initTop = 100;
+    if (anchor) {
+     try {
+      const r = anchor.getBoundingClientRect();
+      initLeft = Math.min(Math.max(r.left, 10), window.innerWidth - 620);
+      initTop = Math.min(Math.max(r.bottom + 8, 10), window.innerHeight - 400);
+    }
+     catch (e) {
+    }
+   }
+    modal.style.cssText = `left:${
+    initLeft
+   }
+   px;
+   top:${
+    initTop
+   }
+   px;
+   `;
+    const tl = 'thunder://' + btoa('AA' + magnet + 'ZZ');
+    modal.innerHTML = ` <div class="bjx-modal-hd"> <div class="bjx-modal-title">🔍 资源预览</div> <span class="bjx-modal-close" title="关闭">×</span> </div> <div class="bjx-modal-body"> <div class="bjx-magnet-row"> <div class="bjx-magnet-text" id="bjx-magnet-display">${
+    magnet
+   }
+   </div> <button class="bjx-btn bjx-btn-copy" data-act="copy">📋 复制</button> <button class="bjx-btn bjx-btn-thunder" data-act="thunder" style="margin-left:4px">⚡ 迅雷</button> </div> <div id="bjx-preview-content"> <div class="bjx-loading"><div class="bjx-spinner"></div><div class="bjx-dots"><span></span><span></span><span></span></div><div>正在查询资源信息…</div></div> </div> </div>`;
+    document.body.appendChild(modal);
+    currentTooltip = modal;
+    makeDraggable(modal, modal.querySelector('.bjx-modal-hd'));
+    modal.querySelector('.bjx-modal-close').onclick = closeModal;
+    modal.addEventListener('click', (e) => {
+     const act = e.target.dataset.act;
+     if (!act) return;
+     if (act === 'copy') {
+      copyText(magnet);
+      const b = e.target;
+      const orig = b.textContent;
+      b.textContent = '✓ 已复制';
+      b.style.background = '#28a745';
+      setTimeout(() => {
+       try {
+        b.textContent = orig;
+        b.style.background = '';
+      }
+       catch (er) {
+      }
+     }
+     , 1500);
+    }
+     if (act === 'thunder') {
+      window.open(tl, '_blank');
+    }
+   }
+   );
+    setTimeout(() => {
+     document.addEventListener('click', function h(ev) {
+      if (currentTooltip && !currentTooltip.contains(ev.target) && !ev.target.classList.contains('bjx-enc') && !ev.target.classList.contains('bjx-inline-btn')) {
+       closeModal();
+       document.removeEventListener('click', h);
+     }
+    }
+    );
+   }
+   , 120);
+    fetchPreview(magnet, modal.querySelector('#bjx-preview-content'));
+  }
+   catch (e) {
+  }
+ }
+  // § 7 全局状态 & 站点判定 const BLOCKED_HOSTS = ['www.bjxah.com'];
+  const MAX_FOUND_ITEMS = 50;
+  const isBlockedSite = BLOCKED_HOSTS.includes(location.hostname);
+  const isWnflb = /wnflb/i.test(location.hostname);
+  // 福利吧及衍生域名：启用专项功能 let isEnabled = getSettings().enabled;
+  let processedNodes = new WeakSet();
+  let totalFound = 0;
+  const foundItems = [];
+  const seenHashes = new Set();
+  const revealedItems = [];
+  // § 8 隐藏内容揭示（仅福利吧） function getGrayLevel(r, g, b) {
+   return r * 0.299 + g * 0.587 + b * 0.114;
+ }
+  function isLightColor(colorStr) {
+   if (!colorStr) return false;
+   if (colorStr === 'white' || colorStr === '#fff' || colorStr === '#ffffff') return true;
+   try {
+    const rgbaMatch = colorStr.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([.\d]+)\)/i);
+    if (rgbaMatch) {
+     if (parseFloat(rgbaMatch[4]) <= 0.2) return true;
+     return getGrayLevel(+rgbaMatch[1], +rgbaMatch[2], +rgbaMatch[3]) > 192;
+   }
+    const rgbMatch = colorStr.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/i);
+    if (rgbMatch) return getGrayLevel(+rgbMatch[1], +rgbMatch[2], +rgbMatch[3]) > 192;
+    const h6 = colorStr.match(/^#([a-fA-F0-9]{
+    6
+   }
+   )$/);
+    if (h6) return getGrayLevel(parseInt(h6[1].slice(0,2),16), parseInt(h6[1].slice(2,4),16), parseInt(h6[1].slice(4,6),16)) > 192;
+    const h3 = colorStr.match(/^#([a-fA-F0-9]{
+    3
+   }
+   )$/);
+    if (h3) {
+     const r = parseInt(h3[1][0]+h3[1][0],16), g = parseInt(h3[1][1]+h3[1][1],16), b = parseInt(h3[1][2]+h3[1][2],16);
+     return getGrayLevel(r, g, b) > 192;
+   }
+  }
+   catch (e) {
+  }
+   return false;
+ }
+  function fontHasExplicitColor(font) {
+   if (font.getAttribute('color')) return true;
+   const s = font.style;
+   return !!(s && (s.color || s.backgroundColor || s.background));
+ }
+  function createRevealedItem(text, element) {
+   try {
+    if (/^magnet:\?/i.test(text)) return {
+     encoded: text, magnet: text, element, type: 'magnet' 
+   }
+   ;
+    const hashMatch = text.match(/^([a-fA-F0-9]{
+    32,40
+   }
+   )$/);
+    if (hashMatch) {
+     const btih = hashMatch[1].toLowerCase();
+     if (seenHashes.has(btih)) {
+      for (const item of foundItems) {
+       if (item.type !== 'url' && extractBtih(item.magnet) === btih) {
+        item.element = element;
+        break;
+      }
+     }
+      return null;
+    }
+     seenHashes.add(btih);
+     return {
+      encoded: text, magnet: 'magnet:?xt=urn:btih:' + btih, element, type: 'magnet' 
+    }
+    ;
+   }
+    if (/^https?:\/\//i.test(text)) return {
+     encoded: text, magnet: text, element, type: 'url' 
+   }
+   ;
+    if (/^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{
+    2,
+   }
+   (\/|$)/.test(text)) return {
+     encoded: text, magnet: 'https://' + text, element, type: 'url' 
+   }
+   ;
+  }
+   catch (e) {
+  }
+   return null;
+ }
+  function scanHiddenContent() {
+   if (!isEnabled || !document.body || !isWnflb) return 0;
+   const postAreas = document.querySelectorAll('td.t_f, .message');
+   let addedCount = 0;
+   postAreas.forEach(area => {
+    try {
+     // 1) 隐藏文字：白字 / 同色字 / 极小字号（不再只限 <font>，覆盖 span/b/i/p 等） const textEls = area.querySelectorAll('font, span, b, i, strong, em, u, s, p');
+     textEls.forEach(el => {
+      try {
+       if (el.closest('.bjx-reveal, .bjx-link-reveal, .magnet-wrap, .bjx-modal, .bjx-enc, .bjx-dock-dropdown')) return;
+       if (el.children.length > 0) return;
+       // 只处理叶子节点，避免容器被重复包裹 const text = (el.textContent || '').trim();
+       if (!text || text.length > 200) return;
+       const cs = getComputedStyle(el);
+       const color = cs.color, bg = cs.backgroundColor;
+       const textLight = isLightColor(color);
+       const bgLight = isLightColor(bg);
+       const fs = parseFloat(cs.fontSize) || 0;
+       const hasHint = fontHasExplicitColor(el) || el.getAttribute('size') || (el.style && el.style.fontSize);
+       let needsReveal = false;
+       if (hasHint && textLight && bgLight) needsReveal = true;
+       // 白字（文字近白、背景近白/透明） else if (hasHint && bg !== 'rgba(0, 0, 0, 0)' && color && bg && color === bg) needsReveal = true;
+       // 同色字（文字色==背景色） else if (fs > 0 && fs < 8 && (el.getAttribute('size') || (el.style && el.style.fontSize))) needsReveal = true;
+       // 极小字号（肉眼难辨） if (!needsReveal) return;
+       const wrap = document.createElement('span');
+       wrap.className = 'bjx-reveal';
+       wrap.textContent = text;
+       el.replaceWith(wrap);
+       styleSecret(wrap);
+       const item = createRevealedItem(text, wrap);
+       if (item) {
+        foundItems.push(item);
+        revealedItems.push(item);
+        saveHistory(item.magnet, extractBtih(item.magnet) || item.magnet, 'magnet');
+        addedCount++;
+      }
+     }
+      catch (e) {
+     }
+    }
+    );
+     // 2) 隐藏超链接：图片链接 / 文字为空格或极短（"隐藏在空格"） const links = area.querySelectorAll('a');
+     links.forEach(a => {
+      try {
+       if (a.classList.contains('bjx-has-link-reveal')) return;
+       if (a.closest('.bjx-reveal, .bjx-link-reveal, .magnet-wrap, .bjx-modal, .bjx-dock-dropdown')) return;
+       if (!a.href || a.href === '#' || a.href.startsWith('javascript:') || a.href.startsWith('mailto:')) return;
+       const hasImg = a.querySelector('img');
+       const txt = (a.textContent || '').trim();
+       const isSpaceOrTiny = txt.length === 0 || /^[\s ]+$/.test(txt) || txt.length <= 3;
+       if (!hasImg && !isSpaceOrTiny) return;
+       const span = document.createElement('span');
+       span.className = 'bjx-link-reveal';
+       span.textContent = '🔗 ' + a.href;
+       a.appendChild(document.createTextNode(' '));
+       a.appendChild(span);
+       a.classList.add('bjx-has-link-reveal');
+       styleSecret(span);
+       const item = createRevealedItem(a.href, span);
+       if (item) {
+        foundItems.push(item);
+        revealedItems.push(item);
+        addedCount++;
+      }
+     }
+      catch (e) {
+     }
+    }
+    );
+   }
+    catch (e) {
+   }
+  }
+  );
+   return addedCount;
+ }
+  // § 9 计数浮层 & 下拉列表 function showDock(dd) {
+   try {
+    if (dd && dd._bjxRebuild) dd._bjxRebuild();
+    if (dd) dd.classList.add('visible');
+  }
+   catch (e) {
+  }
+ }
+  function hideDock(dd) {
+   try {
+    if (dd) dd.classList.remove('visible');
+  }
+   catch (e) {
+  }
+ }
+  function syncDock() {
+   try {
+    const dock = document.getElementById('bjx-dock');
+    const modal = document.getElementById('bjx-panel-modal');
+    if (dock) dock.style.display = (modal && modal.classList.contains('visible')) ? 'none' : '';
+  }
+   catch (e) {
+  }
+ }
+  function buildEncItems(dd) {
+   foundItems.forEach((item) => {
+    try {
+     const isUrl = item.type === 'url';
+     const row = document.createElement('div');
+     row.className = 'bjx-dropdown-item';
+     const truncated = item.encoded.length > 24 ? item.encoded.slice(0, 24) + '…' : item.encoded;
+     const magnetShort = item.magnet.length > 60 ? item.magnet.slice(0, 60) + '…' : item.magnet;
+     const info = document.createElement('div');
+     info.className = 'bjx-dd-info';
+     info.title = isUrl ? '点击复制链接' : '点击复制磁力链接';
+     info.innerHTML = `<span class="bjx-dd-text">${
+     truncated
+    }
+    </span><span class="bjx-dd-meta">${
+     magnetShort
+    }
+    </span>`;
+     info.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyText(item.magnet);
+      const orig = info.title;
+      info.title = '✓ 已复制';
+      setTimeout(() => {
+       try {
+        info.title = orig;
+      }
+       catch (er) {
+      }
+     }
+     , 1200);
+      try {
+       item.element.scrollIntoView({
+        behavior:'smooth', block:'center' 
+      }
+      );
+       item.element.style.transition = 'box-shadow 0.3s';
+       item.element.style.boxShadow = '0 0 0 3px #ff6b6b, 0 0 16px rgba(255,107,107,0.6)';
+       setTimeout(() => {
+        try {
+         item.element.style.boxShadow = '';
+       }
+        catch (er) {
+       }
+      }
+      , 2000);
+     }
+      catch (se) {
+     }
+    }
+    );
+     if (isUrl) {
+      const openBtn = document.createElement('button');
+      openBtn.className = 'bjx-dd-preview-btn';
+      openBtn.textContent = '跳转';
+      openBtn.title = '在新标签页中打开链接';
+      openBtn.addEventListener('click', (e) => {
+       e.stopPropagation();
+       try {
+        window.open(item.magnet, '_blank');
+      }
+       catch (er) {
+      }
+     }
+     );
+      row.appendChild(info);
+      row.appendChild(openBtn);
+    }
+     else {
+      const previewBtn = document.createElement('button');
+      previewBtn.className = 'bjx-dd-preview-btn';
+      previewBtn.textContent = '查看';
+      previewBtn.title = '查看资源信息与预览图';
+      previewBtn.addEventListener('click', (e) => {
+       e.stopPropagation();
+       try {
+        showPreviewModal(item.magnet, null);
+      }
+       catch (er) {
+      }
+     }
+     );
+      row.appendChild(info);
+      row.appendChild(previewBtn);
+    }
+     dd.appendChild(row);
+   }
+    catch (itemErr) {
+   }
+  }
+  );
+ }
+  function buildImageGrid(dd, imgs) {
+   const sec = document.createElement('div');
+   sec.className = 'bjx-dd-images';
+   sec.innerHTML = '<div class="bjx-dd-images-title">🖼️ 本帖图片 (' + imgs.length + ')</div>';
+   const grid = document.createElement('div');
+   grid.className = 'bjx-dd-images-grid';
+   imgs.forEach(im => {
+    try {
+     const a = document.createElement('a');
+     a.href = im.src;
+     a.target = '_blank';
+     a.rel = 'noopener';
+     a.className = 'bjx-dd-thumb';
+     a.title = (im.alt || im.src) + '（点击放大）';
+     const i = document.createElement('img');
+     i.src = im.src;
+     i.loading = 'lazy';
+     i.onerror = () => {
+      a.style.display = 'none';
+    }
+    ;
+     a.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+       showImageLightbox(im.full || im.src, im.alt || im.src);
+     }
+      catch (er) {
+     }
+    }
+    );
+     a.appendChild(i);
+     grid.appendChild(a);
+   }
+    catch (ie) {
+   }
+  }
+  );
+   sec.appendChild(grid);
+   dd.appendChild(sec);
+ }
+  function showImageLightbox(src, alt) {
+   try {
+    let box = document.getElementById('bjx-lightbox');
+    if (!box) {
+     box = document.createElement('div');
+     box.id = 'bjx-lightbox';
+     box.addEventListener('click', () => {
+      try {
+       box.classList.remove('visible');
+     }
+      catch (e) {
+     }
+    }
+    );
+     document.body.appendChild(box);
+   }
+    box.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = alt || '';
+    img.addEventListener('click', (e) => {
+     e.stopPropagation();
+   }
+   );
+    box.appendChild(img);
+    box.classList.add('visible');
+  }
+   catch (e) {
+  }
+ }
+  function resolveImgSrc(img) {
+   try {
+    const raw = [img.getAttribute('zoomfile'), img.getAttribute('data-zoomfile'), img.getAttribute('file'), img.getAttribute('data-original'), img.getAttribute('data-src'), img.getAttribute('data-lazy-src'), img.getAttribute('src')];
+    for (let r of raw) {
+     if (!r) continue;
+     r = r.trim();
+     if (!r || r.indexOf('data:') === 0) continue;
+     if (/none\.gif|blank\.gif|spacer\.gif|empty\.gif|grey\.gif|loading\.gif|pixel\.gif|1x1\.gif/i.test(r)) continue;
+     try {
+      return new URL(r, location.href).href;
+    }
+     catch (e) {
+      return r;
+    }
+   }
+  }
+   catch (e) {
+  }
+   return '';
+ }
+  function hdImageSrc(url) {
+   if (!url) return url;
+   try {
+    let u = url.replace(/\?thumb=(yes|1|true)/i, '?').replace(/&thumb=(yes|1|true)/i, '').replace(/[?&]w=\d+/i, '').replace(/[?&]h=\d+/i, '').replace(/[?&]width=\d+/i, '').replace(/[?&]height=\d+/i, '');
+    u = u.replace(/\?&/, '?').replace(/&&/g, '&').replace(/[?&]$/, '');
+    return u;
+  }
+   catch (e) {
+    return url;
+  }
+ }
+  function getImgDisplaySize(img) {
+   let w = img.naturalWidth || 0, h = img.naturalHeight || 0;
+   if (!w || !h) {
+    const aw = parseInt(img.getAttribute('width')) || 0;
+    const ah = parseInt(img.getAttribute('height')) || 0;
+    if (aw) w = w || aw;
+    if (ah) h = h || ah;
+  }
+   if (!w || !h) {
+    try {
+     const rect = img.getBoundingClientRect();
+     if (rect && rect.width && rect.height) {
+      if (!w) w = rect.width;
+      if (!h) h = rect.height;
+    }
+   }
+    catch (e) {
+   }
+  }
+   return {
+    w: w, h: h 
+  }
+  ;
+ }
+  function isTinyDecorative(src) {
+   try {
+    const s = (src || '').toLowerCase();
+    // 已知的小像素 / 占位 / 分隔 / 追踪类图片命名（1x1、line、spacer、pixel…） return /\b(\d+x\d+|1_1|px|pixel|dot|spot|spacer|blank|line|sep|separator|clear|transparent|tracking|beacon|count|stat|space)\b/i.test(s);
+  }
+   catch (e) {
+    return false;
+  }
+ }
+  function isEmoticon(img) {
+   try {
+    const src = resolveImgSrc(img).toLowerCase();
+    const cls = (img.className || '').toLowerCase();
+    const emoKeys = ['smiley', 'smile', '/face/', 'emoji', 'qqface', 'dz_emoji', 'expression', 'icon_smile', 'face_', 'smile_', 'static/image/smilies', 'static/image/smiley'];
+    if (emoKeys.some(k => src.indexOf(k) !== -1 || cls.indexOf(k) !== -1)) return true;
+    const {
+     w, h 
+   }
+    = getImgDisplaySize(img);
+    if (w && h && w <= 32 && h <= 32) return true;
+    return false;
+  }
+   catch (e) {
+    return false;
+  }
+ }
+  function collectPostImages() {
+   const out = [];
+   const seen = new Set();
+   document.querySelectorAll('td.t_f, .message').forEach(area => {
+    area.querySelectorAll('img').forEach(img => {
+     try {
+      if (img.closest('.bjx-reveal, .bjx-link-reveal, .magnet-wrap, .bjx-modal, #bjx-panel, #bjx-gear, .bjx-counter-dropdown, .bjx-screenshots, #bjx-dock, .bjx-dock-dropdown')) return;
+      if (isEmoticon(img)) return;
+      const src = resolveImgSrc(img);
+      if (!src) return;
+      if (isTinyDecorative(src)) return;
+      const {
+       w, h 
+     }
+      = getImgDisplaySize(img);
+      if (w && h && (w < 200 || h < 200)) return;
+      if (seen.has(src)) return;
+      seen.add(src);
+      out.push({
+       src: src, full: hdImageSrc(src), alt: img.getAttribute('alt') || '' 
+     }
+     );
+    }
+     catch (e) {
+    }
+   }
+   );
+  }
+  );
+   return out;
+ }
+  function isPanLink(href) {
+   const h = (href || '').toLowerCase();
+   const panDomains = ['115.com', '115cdn', 'pan.baidu.com', 'baidu.com/', 'aliyundrive.com', 'alipan.com', 'quark.cn', 'quark', 'weiyun.qq.com', 'cloud.189.cn', '189.cn', 'xunlei.com', 'pan.xunlei.com', 'tyupload', 'caiyun', 'lanzou', 'lanzous', 'lanzoux', 'eyun', 'ctfile', 't00y', 'zhongye', 'video.cloud.189.cn', 'vdisk', 'wodemo', 'ypsfan', 'xiaoya', 'edisk'];
+   return panDomains.some(d => h.indexOf(d) !== -1);
+ }
+  function collectPostLinks() {
+   const res = {
+    url: [], magnet: [], pan: [] 
+  }
+  ;
+   const seen = new Set();
+   document.querySelectorAll('td.t_f, .message').forEach(area => {
+    area.querySelectorAll('a').forEach(a => {
+     try {
+      if (a.closest('.bjx-reveal, .bjx-link-reveal, .magnet-wrap, .bjx-modal, #bjx-panel, #bjx-gear, .bjx-counter-dropdown, .bjx-screenshots, .bjx-dd-thumb, #bjx-dock, .bjx-dock-icon, .bjx-dock-dropdown, .sign, .signature, .sig, .signstuff')) return;
+      let href = (a.getAttribute('href') || '').trim();
+      if (!href) return;
+      if (href.indexOf('magnet:') === 0) {
+       if (seen.has(href)) return;
+       seen.add(href);
+       res.magnet.push({
+        href: href, text: (a.textContent.trim().slice(0, 40) || href.slice(0, 40)), el: a 
+      }
+      );
+     }
+      else if (/^https?:\/\//i.test(href)) {
+       if (seen.has(href)) return;
+       seen.add(href);
+       const label = a.textContent.trim().slice(0, 40) || href;
+       if (isPanLink(href)) res.pan.push({
+        href: href, text: label, el: a 
+      }
+      );
+       else res.url.push({
+        href: href, text: label, el: a 
+      }
+      );
+     }
+    }
+     catch (e) {
+    }
+   }
+   );
+  }
+  );
+   return res;
+ }
+  function appendLinkSection(dd, title, links, kind, anchorEl) {
+   if (!links.length) return;
+   const sec = document.createElement('div');
+   sec.className = 'bjx-dd-links';
+   sec.innerHTML = '<div class="bjx-dd-links-title">' + title + ' (' + links.length + ')</div>';
+   links.forEach(lk => {
+    try {
+     const row = document.createElement('div');
+     row.className = 'bjx-dropdown-item';
+     const truncated = lk.text.length > 24 ? lk.text.slice(0, 24) + '…' : lk.text;
+     const hrefShort = lk.href.length > 60 ? lk.href.slice(0, 60) + '…' : lk.href;
+     const info = document.createElement('div');
+     info.className = 'bjx-dd-info';
+     info.title = (kind === 'url') ? '点击定位到帖中链接位置' : '点击复制链接';
+     info.innerHTML = '<span class="bjx-dd-text">' + truncated + '</span><span class="bjx-dd-meta">' + hrefShort + '</span>';
+     info.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (kind === 'url' && lk.el) {
+       try {
+        lk.el.scrollIntoView({
+         behavior: 'smooth', block: 'center' 
+       }
+       );
+        lk.el.style.transition = 'box-shadow 0.3s, background 0.3s';
+        lk.el.style.boxShadow = '0 0 0 3px #ffb74d, 0 0 18px rgba(255,183,77,0.7)';
+        lk.el.style.background = 'rgba(255,183,77,0.12)';
+        setTimeout(() => {
+         try {
+          lk.el.style.boxShadow = '';
+          lk.el.style.background = '';
+        }
+         catch (er) {
+        }
+       }
+       , 2200);
+      }
+       catch (se) {
+        copyText(lk.href);
+      }
+     }
+      else {
+       copyText(lk.href);
+       const o = info.title;
+       info.title = '✓ 已复制';
+       setTimeout(() => {
+        try {
+         info.title = o;
+       }
+        catch (er) {
+       }
+      }
+      , 1200);
+     }
+    }
+    );
+     const btn = document.createElement('button');
+     btn.className = 'bjx-dd-preview-btn';
+     if (kind === 'magnet') {
+      btn.textContent = '查看';
+      btn.title = '查看资源信息与预览图';
+      btn.addEventListener('click', (e) => {
+       e.stopPropagation();
+       try {
+        if (dd) dd.classList.remove('visible');
+        if (anchorEl) anchorEl.classList.remove('bjx-counter-open');
+      }
+       catch (er) {
+      }
+       showPreviewModal(lk.href, anchorEl);
+     }
+     );
+    }
+     else {
+      btn.textContent = '跳转';
+      btn.title = '在新标签页中打开';
+      btn.addEventListener('click', (e) => {
+       e.stopPropagation();
+       try {
+        window.open(lk.href, '_blank');
+      }
+       catch (er) {
+      }
+     }
+     );
+    }
+     row.appendChild(info);
+     row.appendChild(btn);
+     sec.appendChild(row);
+   }
+    catch (e) {
+   }
+  }
+  );
+   dd.appendChild(sec);
+ }
+  let lastDockSig = '';
+  function updateCounter(n) {
+   try {
+    const hasPost = !!document.querySelector('td.t_f, .message');
+    if (!hasPost) {
+     const old = document.getElementById('bjx-dock');
+     if (old) old.remove();
+     lastDockSig = '';
+     return;
+   }
+    const imgs = collectPostImages();
+    const links = collectPostLinks();
+    const cats = [ {
+     key:'enc', icon:'🔓', label:'暗号 / 解码', count:n, build:(dd)=>buildEncItems(dd) 
+   }
+   , {
+     key:'img', icon:'🖼️', label:'图片', count:imgs.length, build:(dd)=>buildImageGrid(dd, imgs) 
+   }
+   , {
+     key:'url', icon:'🔗', label:'超链接', count:links.url.length, build:(dd)=>appendLinkSection(dd, '🔗 超链接', links.url, 'url', null) 
+   }
+   , {
+     key:'magnet', icon:'🧲', label:'磁力链接', count:links.magnet.length, build:(dd)=>appendLinkSection(dd, '🧲 磁力链接', links.magnet, 'magnet', null) 
+   }
+   , {
+     key:'pan', icon:'💾', label:'网盘链接', count:links.pan.length, build:(dd)=>appendLinkSection(dd, '💾 网盘链接', links.pan, 'pan', null) 
+   }
+    ];
+    const hasAny = cats.some(c => c.count > 0);
+    const sig = [n, imgs.length, links.url.length, links.magnet.length, links.pan.length].join('|');
+    let dock = document.getElementById('bjx-dock');
+    if (!hasAny) {
+     if (dock) dock.remove();
+     lastDockSig = '';
+     return;
+   }
+    // 数量未变化且 dock 已存在 → 不重建，避免打断正在悬停的弹窗 if (dock && sig === lastDockSig) return;
+    lastDockSig = sig;
+    if (!dock) {
+     dock = document.createElement('div');
+     dock.id = 'bjx-dock';
+     document.body.appendChild(dock);
+   }
+    dock.innerHTML = '';
+    cats.forEach(c => {
+     if (c.count <= 0) return;
+     const btn = document.createElement('div');
+     btn.className = 'bjx-dock-icon';
+     btn.title = c.label + '（' + c.count + '）· 鼠标悬停查看';
+     btn.textContent = c.icon;
+     const badge = document.createElement('span');
+     badge.className = 'bjx-dock-badge';
+     badge.textContent = c.count;
+     btn.appendChild(badge);
+     const dd = document.createElement('div');
+     dd.className = 'bjx-dock-dropdown';
+     try {
+      c.build(dd);
+    }
+     catch (be) {
+    }
+     if (c.key === 'img') {
+      dd._bjxRebuild = () => {
+       try {
+        dd.innerHTML = '';
+        buildImageGrid(dd, collectPostImages());
+      }
+       catch (e) {
+      }
+     }
+     ;
+    }
+     btn.appendChild(dd);
+     btn.addEventListener('mouseenter', () => {
+      clearTimeout(dd._bjxHide);
+      showDock(dd);
+    }
+    );
+     btn.addEventListener('mouseleave', () => {
+      clearTimeout(dd._bjxHide);
+      dd._bjxHide = setTimeout(() => hideDock(dd), 300);
+    }
+    );
+     dd.addEventListener('mouseenter', () => {
+      clearTimeout(dd._bjxHide);
+    }
+    );
+     dd.addEventListener('mouseleave', () => {
+      clearTimeout(dd._bjxHide);
+      dd._bjxHide = setTimeout(() => hideDock(dd), 300);
+    }
+    );
+     btn.addEventListener('click', () => {
+      if (dd.classList.contains('visible')) hideDock(dd);
+      else showDock(dd);
+    }
+    );
+     dock.appendChild(btn);
+   }
+   );
+    syncDock();
+  }
+   catch (e) {
+  }
+ }
+  // § 10 DOM 扫描核心 function processTextNode(node) {
+   if (processedNodes.has(node)) return 0;
+   if (totalFound >= MAX_FOUND_ITEMS) return 0;
+   const text = node.nodeValue;
+   if (!text || text.trim().length < 8) return 0;
+   try {
+    const magnetRE = /magnet:\?xt=urn:btih:[a-zA-Z0-9]{
+    32,40
+   }
+   [^\s]*/
+   g;
+    const hashRE = /\b[a-fA-F0-9]{
+    32,40
+   }
+   \b(?!\.\w+)/g;
+    const matches = [];
+    let m;
+    BJX_REGEX.lastIndex = 0;
+    while ((m = BJX_REGEX.exec(text)) !== null) matches.push({
+     idx: m.index, raw: m[0], src: 'bjx' 
+   }
+   );
+    magnetRE.lastIndex = 0;
+    while ((m = magnetRE.exec(text)) !== null) matches.push({
+     idx: m.index, raw: m[0], src: 'magnet' 
+   }
+   );
+    hashRE.lastIndex = 0;
+    while ((m = hashRE.exec(text)) !== null) matches.push({
+     idx: m.index, raw: m[0], src: 'hash' 
+   }
+   );
+    if (!matches.length) {
+     processedNodes.add(node);
+     return 0;
+   }
+    matches.sort((a, b) => a.idx - b.idx);
+    const frag = document.createDocumentFragment();
+    let last = 0, found = 0;
+    for (const hit of matches) {
+     if (hit.idx < last) continue;
+     if (hit.idx > last) frag.appendChild(document.createTextNode(text.slice(last, hit.idx)));
+     let magnet;
+     if (hit.src === 'bjx') magnet = buildMagnet(decode(hit.raw));
+     else if (hit.src === 'hash') magnet = 'magnet:?xt=urn:btih:' + hit.raw;
+     else magnet = hit.raw;
+     const itemType = detectType(magnet);
+     const isUrlItem = itemType === 'url';
+     const btih = extractBtih(magnet) || magnet;
+     if (seenHashes.has(btih)) {
+      last = hit.idx + hit.raw.length;
+      frag.appendChild(document.createTextNode(text.slice(hit.idx, last)));
+      continue;
+    }
+     seenHashes.add(btih);
+     const wrap = document.createElement('span');
+     wrap.className = 'magnet-wrap';
+     const enc = document.createElement('span');
+     enc.className = 'bjx-enc';
+     enc.title = isUrlItem ? '点击复制链接：' + magnet.slice(0, 60) : '点击复制磁力链接：' + magnet.slice(0, 60);
+     styleSecret(enc);
+     enc.textContent = hit.raw;
+     enc.addEventListener('click', (e) => {
+      e.stopPropagation();
+      try {
+       copyText(magnet);
+       enc.style.outline = '2px solid #28a745';
+       enc.style.outlineOffset = '1px';
+       setTimeout(() => {
+        try {
+         enc.style.outline = '';
+         enc.style.outlineOffset = '';
+       }
+        catch (er) {
+       }
+      }
+      , 1000);
+     }
+      catch (er) {
+     }
+    }
+    );
+     const btn = document.createElement('button');
+     btn.className = 'bjx-inline-btn';
+     if (isUrlItem) {
+      btn.textContent = '跳转';
+      btn.title = '在新标签页中打开链接';
+      btn.addEventListener('click', (e) => {
+       e.stopPropagation();
+       try {
+        window.open(magnet, '_blank');
+      }
+       catch (er) {
+      }
+     }
+     );
+    }
+     else {
+      btn.textContent = '查看';
+      btn.title = '查看资源信息与预览图';
+      btn.addEventListener('click', (e) => {
+       e.stopPropagation();
+       try {
+        showPreviewModal(magnet, btn);
+      }
+       catch (er) {
+      }
+     }
+     );
+    }
+     wrap.appendChild(enc);
+     wrap.appendChild(btn);
+     frag.appendChild(wrap);
+     last = hit.idx + hit.raw.length;
+     foundItems.push({
+      encoded: hit.raw, magnet, element: wrap, type: isUrlItem ? 'url' : 'magnet' 
+    }
+    );
+     if (!isUrlItem) saveHistory(magnet, btih, 'magnet');
+     found++;
+   }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    if (found === 0) {
+     processedNodes.add(node);
+     return 0;
+   }
+    const parent = node.parentNode;
+    if (!parent) return 0;
+    try {
+     parent.replaceChild(frag, node);
+   }
+    catch (replaceErr) {
+     return 0;
+   }
+    return found;
+  }
+   catch (e) {
+    return 0;
+  }
+ }
+  const SKIP = new Set(['SCRIPT','STYLE','NOSCRIPT','TEXTAREA','CODE','PRE','TITLE','HEAD','INPUT','SELECT','OPTION','SVG']);
+  function walkDOM(root) {
+   let count = 0;
+   const walk = (node) => {
+    if (!node) return;
+    if (node.nodeType === 3) {
+     count += processTextNode(node);
+     return;
+   }
+    if (node.nodeType !== 1) return;
+    if (SKIP.has(node.tagName)) return;
+    if (node.classList) {
+     if (node.classList.contains('magnet-wrap')) return;
+     if (node.classList.contains('bjx-enc')) return;
+     if (node.classList.contains('bjx-modal')) return;
+     if (node.classList.contains('bjx-reveal')) return;
+     if (node.classList.contains('bjx-link-reveal')) return;
+     if (node.classList.contains('bjx-has-link-reveal')) return;
+   }
+    if (node.id === 'bjx-dock') return;
+    Array.from(node.childNodes).forEach(walk);
+  }
+  ;
+   try {
+    walk(root);
+  }
+   catch (e) {
+  }
+   return count;
+ }
+  // 热帖高亮 & 头像勋章隐藏（仅福利吧） function moveLeadingTagsToEnd() {
+   try {
+    const TAG_RE = /^[\\[【(（][^\]】)）]{
+    1,10
+   }
+   [\]】)）]$/;
+    const ELEM_TAG_CLASS = /prefix|tag|label|type|ico|xg1|cat|mark|classif|sort/i;
+    // 判定一个“前一个兄弟元素”是否为板块/分类标签（Discuz 列表里通常是 <a class="xg1">[分类]</a> 或带 class 的小标签） const isCatSibling = (el) => {
+     try {
+      const tag = el.tagName.toLowerCase();
+      const cls = (el.className || '').toLowerCase();
+      const txt = (el.textContent || '').trim();
+      if (tag === 'a' && (cls.indexOf('xg1') !== -1 || cls.indexOf('type') !== -1 || cls.indexOf('cat') !== -1)) return TAG_RE.test(txt) || cls.indexOf('xg1') !== -1;
+      if (['span','font','i','b','em','strong','label','mark'].indexOf(tag) !== -1) return (ELEM_TAG_CLASS.test(cls) || TAG_RE.test(txt));
+      return false;
+    }
+     catch (e) {
+      return false;
+    }
+   }
+   ;
+    document.querySelectorAll('a.xst').forEach(a => {
+     if (a.dataset.bjxTagMoved) return;
+     if (a.closest('#bjx-dock, #bjx-panel, .bjx-modal, .bjx-counter-dropdown, .bjx-dock-dropdown')) return;
+     a.dataset.bjxTagMoved = '1';
+     const parent = a.parentElement;
+     // 1) 收集标题前面的兄弟分类元素（板块分类），移到标题之后 if (parent) {
+      const collected = [];
+      let sib = a.previousSibling;
+      while (sib) {
+       if (sib.nodeType === 1) {
+        if (isCatSibling(sib)) {
+         collected.unshift(sib);
+         sib = sib.previousSibling;
+         continue;
+       }
+        break;
+      }
+       else if (sib.nodeType === 3) {
+        if ((sib.nodeValue || '').trim().length === 0) {
+         sib = sib.previousSibling;
+         continue;
+       }
+        break;
+      }
+       sib = sib.previousSibling;
+     }
+      collected.forEach(el => {
+       try {
+        parent.insertBefore(el, a.nextSibling);
+      }
+       catch (e) {
+      }
+     }
+     );
+      if (collected.length) parent.insertBefore(document.createTextNode(' '), a.nextSibling);
+    }
+     // 2) 标题文字内部的开头标签（如 [热门]）同样移到尾部 const moved = [];
+     let child = a.firstChild;
+     let keepLooking = true;
+     while (child && keepLooking) {
+      if (child.nodeType === 1) {
+       const tag = child.tagName.toLowerCase();
+       const cls = (child.className || '').toLowerCase();
+       const txt = (child.textContent || '').trim();
+       const isTagEl = ['span','font','i','b','em','strong','label','mark'].indexOf(tag) !== -1 && (ELEM_TAG_CLASS.test(cls) || TAG_RE.test(txt));
+       if (isTagEl) {
+        moved.push(child);
+        child = child.nextSibling;
+        continue;
+      }
+       keepLooking = false;
+     }
+      else if (child.nodeType === 3) {
+       let txt = child.nodeValue;
+       let guard = 0;
+       while (txt && guard++ < 20) {
+        const m = txt.match(/^\s*([\[【(（][^\]】)）]{
+        1,10
+       }
+       [\]】)）])\s*/
+       );
+        if (!m) break;
+        moved.push(document.createTextNode(m[1] + ' '));
+        txt = txt.slice(m[0].length);
+      }
+       if (moved.length) {
+        if (txt.length === 0) {
+         const next = child.nextSibling;
+         a.removeChild(child);
+         child = next;
+         continue;
+       }
+        else {
+         child.nodeValue = txt;
+         keepLooking = false;
+       }
+      }
+       else keepLooking = false;
+     }
+      else keepLooking = false;
+    }
+     if (moved.length) {
+      a.appendChild(document.createTextNode(' '));
+      moved.forEach(n => a.appendChild(n));
+    }
+   }
+   );
+  }
+   catch (e) {
+  }
+ }
+  function scanHotThreads() {
+   if (!document.body) return;
+   const rows = document.querySelectorAll('tbody[id^="normalthread_"]');
+   if (!rows.length) return;
+   const cfg = getSettings();
+   const titleOn = !!cfg.titleHighlightEnabled;
+   const minReply = parseInt(cfg.hotReply) || 0;
+   const minView = parseInt(cfg.hotView) || 0;
+   const mode = cfg.hotMode === 'and' ? 'and' : 'or';
+   rows.forEach(row => {
+    try {
+     const numTd = row.querySelector('td.num');
+     if (!numTd) return;
+     const replyEl = numTd.querySelector('a.xi2');
+     const viewEl = numTd.querySelector('em');
+     const replies = replyEl ? (parseInt(replyEl.textContent.replace(/,/g, '')) || 0) : 0;
+     const views = viewEl ? (parseInt(viewEl.textContent.replace(/,/g, '')) || 0) : 0;
+     let rowMatch = false, replyOk = false, viewOk = false;
+     if (mode === 'and') {
+      replyOk = minReply > 0 ? replies >= minReply : true;
+      viewOk = minView > 0 ? views >= minView : true;
+      rowMatch = replyOk && viewOk;
+    }
+     else {
+      replyOk = minReply > 0 ? replies >= minReply : false;
+      viewOk = minView > 0 ? views >= minView : false;
+      rowMatch = replyOk || viewOk;
+    }
+     row.classList.toggle('bjx-hot-thread', rowMatch && titleOn);
+     const titleA = row.querySelector('a.xst');
+     if (titleA) titleA.classList.add('bjx-anim-title');
+     if (replyEl) replyEl.classList.toggle('bjx-hot-reply', replyOk);
+     if (viewEl) viewEl.classList.toggle('bjx-hot-view', viewOk);
+   }
+    catch (rowErr) {
+   }
+  }
+  );
+ }
+  function applyAvatarMedalSetting() {
+   if (!document.body) return;
+   if (!isWnflb) return;
+   document.body.classList.toggle('bjx-hide-avatar-medals', !!getSettings().hideAvatarMedals);
+ }
+  function applyWidescreenSetting() {
+   try {
+    document.body.classList.toggle('bjx-widescreen', !!getSettings().widescreen);
+  }
+   catch (e) {
+  }
+ }
+  function applyTitleHighlightColor() {
+   try {
+    const c = getSettings().titleHighlightColor || '#ff6600';
+    document.documentElement.style.setProperty('--bjx-title-hl', c);
+  }
+   catch (e) {
+  }
+ }
+  function styleSecret(el) {
+   try {
+    const cfg = getSettings();
+    if (cfg.encBgEnabled) {
+     const c = cfg.encColor || '#00fbff';
+     el.style.backgroundColor = c;
+     el.style.border = '1px dashed ' + c;
+   }
+    else {
+     el.style.backgroundColor = 'transparent';
+     el.style.border = 'none';
+   }
+  }
+   catch (e) {
+  }
+ }
+  // 自定义色同时作用于三类「暗号」：百家姓块 / 揭示的白字·极小字 / 隐藏超链接 function applyEncColor() {
+   document.querySelectorAll('.bjx-enc, .bjx-reveal, .bjx-link-reveal').forEach(el => styleSecret(el));
+ }
+  // 3D 鼠标倾斜（主题列表全部标题） document.addEventListener('mousemove', (e) => {
+   const card = e.target.closest('a.xst.bjx-anim-title');
+   if (!card) return;
+   if (!card.dataset.init3d) {
+    const parent = card.parentElement;
+    if (parent) parent.style.perspective = '1000px';
+    card.dataset.init3d = 'true';
+  }
+   const rect = card.getBoundingClientRect();
+   const x = e.clientX - rect.left - (rect.width / 2);
+   const y = e.clientY - rect.top - (rect.height / 2);
+   const maxTilt = 15;
+   const rotateX = -(y / (rect.height / 2)) * maxTilt;
+   const rotateY = (x / (rect.width / 2)) * maxTilt;
+   card.style.transform = `rotateX(${
+   rotateX
+  }
+  deg) rotateY(${
+   rotateY
+  }
+  deg) scale(1.04)`;
+ }
+ );
+  document.addEventListener('mouseout', (e) => {
+   const card = e.target.closest('a.xst.bjx-anim-title');
+   if (card) card.style.transform = 'rotateX(0deg) rotateY(0deg) scale(1)';
+ }
+ );
+  function scanPage() {
+   if (!isEnabled || !document.body) return 0;
+   if (isBlockedSite) return 0;
+   if (totalFound >= MAX_FOUND_ITEMS) return 0;
+   try {
+    injectContentStyles();
+    applyTitleHighlightColor();
+    applyWidescreenSetting();
+    applyEncColor();
+    const n = walkDOM(document.body);
+    totalFound += n;
+    const r = scanHiddenContent();
+    totalFound += r;
+    updateCounter(totalFound);
+    if (isWnflb) {
+     scanHotThreads();
+     applyAvatarMedalSetting();
+     moveLeadingTagsToEnd();
+   }
+    return n + r;
+  }
+   catch (e) {
+    return 0;
+  }
+ }
+  function rescan() {
+   try {
+    closeModal();
+    observer.disconnect();
+    clearTimeout(mutTimer);
+    const savedUrlItems = revealedItems.filter(item => item.type === 'url');
+    revealedItems.length = 0;
+    totalFound = 0;
+    foundItems.length = 0;
+    seenHashes.clear();
+    processedNodes = new WeakSet();
+    document.querySelectorAll('.magnet-wrap').forEach(wrap => {
+     try {
+      const t = wrap.querySelector('.bjx-enc')?.textContent || '';
+      wrap.parentNode?.replaceChild(document.createTextNode(t), wrap);
+    }
+     catch (e) {
+    }
+   }
+   );
+    document.querySelectorAll('.bjx-reveal').forEach(el => {
+     try {
+      el.parentNode?.replaceChild(document.createTextNode(el.textContent), el);
+    }
+     catch (e) {
+    }
+   }
+   );
+    document.querySelectorAll('.bjx-link-reveal').forEach(el => {
+     try {
+      el.remove();
+    }
+     catch (e) {
+    }
+   }
+   );
+    document.querySelectorAll('.bjx-has-link-reveal').forEach(el => el.classList.remove('bjx-has-link-reveal'));
+    scanPage();
+    for (const item of savedUrlItems) {
+     if (!foundItems.some(fi => fi.magnet === item.magnet)) {
+      foundItems.push(item);
+      revealedItems.push(item);
+      totalFound++;
+    }
+   }
+    updateCounter(totalFound);
+    if (isWnflb) {
+     scanHotThreads();
+     applyAvatarMedalSetting();
+     moveLeadingTagsToEnd();
+   }
+    startObserver();
+  }
+   catch (e) {
+    try {
+     startObserver();
+   }
+    catch (se) {
+   }
+  }
+ }
+  let mutTimer = null;
+  const observer = new MutationObserver((muts) => {
+   if (!isEnabled || isBlockedSite) return;
+   if (totalFound >= MAX_FOUND_ITEMS) {
+    observer.disconnect();
+    return;
+  }
+   clearTimeout(mutTimer);
+   mutTimer = setTimeout(() => {
+    try {
+     let added = 0;
+     for (const mut of muts) {
+      for (const node of mut.addedNodes) {
+       if (totalFound >= MAX_FOUND_ITEMS) {
+        observer.disconnect();
+        break;
+      }
+       try {
+        if (node.nodeType === 3) added += processTextNode(node);
+        else if (node.nodeType === 1) added += walkDOM(node);
+      }
+       catch (nodeErr) {
+      }
+     }
+    }
+     if (added > 0) totalFound += added;
+     const r = scanHiddenContent();
+     if (isWnflb) {
+      scanHotThreads();
+      applyAvatarMedalSetting();
+      moveLeadingTagsToEnd();
+    }
+     if (r > 0) totalFound += r;
+     // 回帖图片 / 链接可能在「无新暗号」的情况下加入，必须始终刷新统计 updateCounter(totalFound);
+   }
+    catch (e) {
+   }
+  }
+  , 400);
+ }
+ );
+  function startObserver() {
+   if (!document.body || isBlockedSite) return;
+   try {
+    observer.observe(document.body, {
+     childList: true, subtree: true 
+   }
+   );
+  }
+   catch (e) {
+  }
+ }
+  // § 11 设置面板（替代 popup） let panelBuilt = false;
+  function buildPanel() {
+   if (panelBuilt) return;
+   panelBuilt = true;
+   injectPanelStyles();
+   // 齿轮按钮 const gear = document.createElement('div');
+   gear.id = 'bjx-gear';
+   gear.title = '福利吧！好孩子，看得见！';
+   gear.textContent = '🔓';
+   document.body.appendChild(gear);
+   // 面板 const panel = document.createElement('div');
+   panel.id = 'bjx-panel';
+   panel.innerHTML = ` <div id="bjx-panel-modal"> <div class="p-header"> <div><div class="p-logo-text">福利吧！好孩子，看得见！</div><div class="p-logo-sub">v1.0</div></div> <label class="switch"><input type="checkbox" id="bjx-toggle-switch" checked><span class="slider"></span></label> </div> <div class="p-status"><span class="p-status-text">当前页面发现暗号：</span><span class="p-count zero" id="bjx-count-badge">0</span></div> <div class="p-section"> <div class="section-title">手动解码 & 预览</div> <textarea id="bjx-input-text" placeholder="粘贴百家姓暗号 / 纯哈希 / 磁力链接…"></textarea> <div class="btn-row"> <button class="btn btn-primary" id="bjx-decode-btn">🔓 解码</button> <button class="btn btn-secondary" id="bjx-clear-btn">清除</button> </div> <div class="result-magnet" id="bjx-result-magnet"> <div id="bjx-result-type-badge"></div> <div id="bjx-result-magnet-text"></div> </div> <div class="btn-row" id="bjx-result-actions" style="display:none"> <button class="btn btn-copy" id="bjx-copy-btn">📋 复制</button> <button class="btn btn-preview" id="bjx-preview-btn">🔍 查看预览图</button> <button class="btn btn-thunder" id="bjx-thunder-btn" style="display:none">⚡ 迅雷</button> </div> <div id="bjx-preview-content" style="margin-top:10px"></div> <div style="margin-top:10px;
+  padding-top:10px;
+  border-top:1px solid #1e2a3a"> <label style="display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  margin-bottom:8px"> <input type="checkbox" id="bjx-enc-bg-enabled"><span style="font-size:12px;
+  color:#e0e0e0;
+  user-select:none">暗号/隐藏内容高亮</span> </label> <div style="display:flex;
+  align-items:center;
+  gap:10px"> <label style="font-size:12px;
+  color:#888;
+  user-select:none">背景颜色</label> <input type="color" id="bjx-enc-color" value="#00fbff" style="width:44px;
+  height:28px;
+  border:1px solid #2a2a4e;
+  background:#0d1117;
+  border-radius:4px;
+  cursor:pointer;
+  padding:0"> <span style="font-size:11px;
+  color:#555" id="bjx-enc-hex">#00fbff</span> </div> </div> </div> <div class="p-section"> <div class="section-title">福吧页面增强</div> <div style="border-bottom:1px solid #1e2a3a;
+  padding-bottom:10px;
+  margin-bottom:10px"> <div style="margin-bottom:8px"><label style="font-size:12px;
+  color:#888;
+  display:block;
+  margin-bottom:4px">回复数 ≥</label><input type="number" id="bjx-hot-reply-input" min="0"></div> <div style="margin-bottom:8px"><label style="font-size:12px;
+  color:#888;
+  display:block;
+  margin-bottom:4px">浏览数 ≥</label><input type="number" id="bjx-hot-view-input" min="0"></div> <div style="margin-bottom:8px"><label style="font-size:12px;
+  color:#888;
+  display:block;
+  margin-bottom:4px">条件逻辑</label> <div class="btn-row"><button class="btn mode-btn" id="bjx-hot-mode-or" data-mode="or">OR（任一满足）</button><button class="btn mode-btn" id="bjx-hot-mode-and" data-mode="and">AND（同时满足）</button></div></div> <button class="btn btn-primary" id="bjx-hot-save-btn" style="width:100%">保存热帖设置</button> </div> <div style="border-bottom:1px solid #1e2a3a;
+  padding-bottom:10px;
+  margin:6px 0 10px"> <label style="display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  padding:4px 0"> <input type="checkbox" id="bjx-title-hl"><span style="font-size:12px;
+  color:#e0e0e0;
+  user-select:none">帖子标题高亮（热帖橙色加粗 / 全部标题 3D 倾斜）</span> </label> <div style="display:flex;
+  align-items:center;
+  gap:10px;
+  padding:4px 0"> <label style="font-size:12px;
+  color:#888;
+  user-select:none">高亮颜色</label> <input type="color" id="bjx-title-hl-color" value="#ff6600" style="width:44px;
+  height:28px;
+  border:1px solid #2a2a4e;
+  background:#0d1117;
+  border-radius:4px;
+  cursor:pointer;
+  padding:0"> <span style="font-size:11px;
+  color:#555" id="bjx-title-hl-hex">#ff6600</span> </div> </div> <label style="display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  padding:4px 0"> <input type="checkbox" id="bjx-widescreen"><span style="font-size:12px;
+  color:#e0e0e0;
+  user-select:none">宽屏优化（比默认960px更宽，上限1280px，不满屏）</span> </label> <label style="display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  padding:4px 0"> <input type="checkbox" id="bjx-hide-avatar-medals"><span style="font-size:12px;
+  color:#e0e0e0;
+  user-select:none">隐藏头像 &amp;
+   勋章</span> </label> <div style="font-size:11px;
+  color:#555;
+  margin-top:2px;
+  line-height:1.5">💡 仅对福吧帖子页面生效，刷新后自动应用</div> <label style="display:flex;
+  align-items:center;
+  gap:8px;
+  cursor:pointer;
+  padding:4px 0"> <input type="checkbox" id="bjx-auto-sign"><span style="font-size:12px;
+  color:#e0e0e0;
+  user-select:none">自动签到（每日首次打开自动签到）</span> </label> <div style="display:flex;
+  align-items:center;
+  gap:10px;
+  padding:4px 0"> <label style="font-size:12px;
+  color:#888;
+  user-select:none;
+  white-space:nowrap">签到插件地址</label> <input type="text" id="bjx-sign-url" style="flex:1;
+  min-width:0;
+  background:#0d1117;
+  color:#e0e0e0;
+  border:1px solid #2a2a4e;
+  border-radius:4px;
+  padding:4px 6px;
+  font-size:12px" placeholder="plugin.php?id=fx_checkin:list"> </div> </div> <div class="p-section"> <div class="section-title" id="bjx-history-toggle" style="cursor:pointer;
+  display:flex;
+  align-items:center;
+  gap:4px"> <span id="bjx-history-arrow">▶</span> 解码历史 <span id="bjx-history-badge" style="margin-left:auto;
+  background:#333;
+  color:#aaa;
+  border-radius:10px;
+  padding:0 7px;
+  font-size:11px;
+  min-width:18px;
+  text-align:center">0</span> </div> <div id="bjx-history-body" style="display:none"> <div id="bjx-history-list" style="max-height:260px;
+  overflow-y:auto"></div> <button class="btn btn-secondary" id="bjx-history-clear-btn" style="width:100%;
+  margin-top:6px;
+  display:none">🗑️ 清空历史</button> </div> </div> <div class="p-footer"><span id="bjx-rescan-btn" class="rescan-btn" style="display:inline-block;
+  width:auto;
+  padding:6px 16px;
+  margin:0">🔄 重新扫描本页</span></div> </div>`;
+   document.body.appendChild(panel);
+   // 交互 const $ = (id) => document.getElementById(id);
+   const modal = $('bjx-panel-modal');
+   gear.addEventListener('click', () => {
+    modal.classList.toggle('visible');
+    if (modal.classList.contains('visible')) {
+     refreshCountBadge();
+     renderHistory();
+   }
+    syncDock();
+  }
+  );
+   // 启用开关 const toggle = $('bjx-toggle-switch');
+   toggle.checked = isEnabled;
+   toggle.addEventListener('change', () => {
+    isEnabled = toggle.checked;
+    setSetting('enabled', isEnabled);
+    if (isEnabled) {
+     scanPage();
+     startObserver();
+   }
+    else {
+     observer.disconnect();
+     document.querySelectorAll('.magnet-wrap').forEach(w => {
+      try {
+       w.parentNode?.replaceChild(document.createTextNode(w.querySelector('.bjx-enc')?.textContent || ''), w);
+     }
+      catch (e) {
+     }
+    }
+    );
+     document.querySelectorAll('.bjx-reveal').forEach(el => {
+      try {
+       el.parentNode?.replaceChild(document.createTextNode(el.textContent), el);
+     }
+      catch (e) {
+     }
+    }
+    );
+     document.querySelectorAll('.bjx-link-reveal').forEach(el => {
+      try {
+       el.remove();
+     }
+      catch (e) {
+     }
+    }
+    );
+     document.querySelectorAll('.bjx-has-link-reveal').forEach(el => el.classList.remove('bjx-has-link-reveal'));
+     revealedItems.length = 0;
+     totalFound = 0;
+     updateCounter(0);
+     closeModal();
+   }
+  }
+   );
+   // 计数徽章 refreshCountBadge();
+   // 热帖设置 const cfg = getSettings();
+   $('bjx-hot-reply-input').value = cfg.hotReply;
+   $('bjx-hot-view-input').value = cfg.hotView;
+   const mode = cfg.hotMode === 'and' ? 'and' : 'or';
+   $('bjx-hot-mode-' + mode).classList.add('active');
+   $('bjx-hot-mode-or').addEventListener('click', () => {
+    $('bjx-hot-mode-or').classList.add('active');
+    $('bjx-hot-mode-and').classList.remove('active');
+  }
+  );
+   $('bjx-hot-mode-and').addEventListener('click', () => {
+    $('bjx-hot-mode-and').classList.add('active');
+    $('bjx-hot-mode-or').classList.remove('active');
+  }
+  );
+   $('bjx-hot-save-btn').addEventListener('click', () => {
+    const reply = parseInt($('bjx-hot-reply-input').value) || 0;
+    const view = parseInt($('bjx-hot-view-input').value) || 0;
+    const m = $('bjx-hot-mode-and').classList.contains('active') ? 'and' : 'or';
+    setSetting('hotReply', reply);
+    setSetting('hotView', view);
+    setSetting('hotMode', m);
+    if (isWnflb) scanHotThreads();
+    const b = $('bjx-hot-save-btn');
+    const orig = b.textContent;
+    b.textContent = '✓ 已保存';
+    b.style.background = '#28a745';
+    setTimeout(() => {
+     b.textContent = orig;
+     b.style.background = '';
+   }
+   , 1500);
+  }
+  );
+   const hideCb = $('bjx-hide-avatar-medals');
+   hideCb.checked = !!cfg.hideAvatarMedals;
+   hideCb.addEventListener('change', () => {
+    setSetting('hideAvatarMedals', hideCb.checked);
+    applyAvatarMedalSetting();
+  }
+  );
+   // 宽屏优化开关 const wsCb = $('bjx-widescreen');
+   wsCb.checked = !!cfg.widescreen;
+   wsCb.addEventListener('change', () => {
+    setSetting('widescreen', wsCb.checked);
+    applyWidescreenSetting();
+  }
+  );
+   // 自动签到开关 + 地址 const asCb = $('bjx-auto-sign');
+   asCb.checked = !!cfg.autoSign;
+   asCb.addEventListener('change', () => {
+    setSetting('autoSign', asCb.checked);
+    if (asCb.checked) autoSign(true);
+  }
+  );
+   const su = $('bjx-sign-url');
+   su.value = cfg.signUrl || 'plugin.php?id=fx_checkin:list';
+   su.addEventListener('change', () => {
+    setSetting('signUrl', (su.value || '').trim());
+  }
+  );
+   // 帖子标题高亮开关 + 自定义颜色 const titleCb = $('bjx-title-hl');
+   titleCb.checked = !!cfg.titleHighlightEnabled;
+   titleCb.addEventListener('change', () => {
+    setSetting('titleHighlightEnabled', titleCb.checked);
+    if (isWnflb) scanHotThreads();
+  }
+  );
+   const colorInput = $('bjx-title-hl-color');
+   const hexLabel = $('bjx-title-hl-hex');
+   colorInput.value = cfg.titleHighlightColor || '#ff6600';
+   hexLabel.textContent = colorInput.value;
+   applyTitleHighlightColor();
+   colorInput.addEventListener('input', () => {
+    setSetting('titleHighlightColor', colorInput.value);
+    hexLabel.textContent = colorInput.value;
+    applyTitleHighlightColor();
+  }
+  );
+   // 历史 $('bjx-history-toggle').addEventListener('click', () => {
+    const open = $('bjx-history-body').style.display !== 'block';
+    $('bjx-history-body').style.display = open ? 'block' : 'none';
+    $('bjx-history-arrow').textContent = open ? '▼' : '▶';
+    if (open) renderHistory();
+  }
+  );
+   $('bjx-history-clear-btn').addEventListener('click', () => {
+    clearHistory();
+    renderHistory();
+  }
+  );
+   // 手动解码 let currentMagnet = '', currentType = 'text';
+   function doDecode() {
+    const input = $('bjx-input-text').value.trim();
+    if (!input) return;
+    const raw = decode(input);
+    currentMagnet = buildMagnet(raw);
+    currentType = detectType(currentMagnet);
+    const labels = {
+     magnet:'磁力链接', hash:'磁力链接(哈希)', ed2k:'ED2K链接', thunder:'迅雷链接', url:'网页链接', text:'文本' 
+   }
+   ;
+    $('bjx-result-type-badge').innerHTML = `<span class="type-badge t-${
+    currentType
+   }
+   ">${
+    labels[currentType] || '文本'
+   }
+   </span>`;
+    $('bjx-result-magnet-text').textContent = currentMagnet;
+    $('bjx-result-magnet').classList.add('visible');
+    $('bjx-result-actions').style.display = 'flex';
+    const isMagnet = currentType === 'magnet' || currentType === 'hash';
+    $('bjx-thunder-btn').style.display = isMagnet ? '' : 'none';
+    $('bjx-preview-content').innerHTML = '';
+    if (currentType !== 'url' && currentType !== 'text') saveHistory(currentMagnet, extractBtih(currentMagnet) || currentMagnet, currentType);
+  }
+   $('bjx-decode-btn').addEventListener('click', doDecode);
+   $('bjx-input-text').addEventListener('input', () => {
+    const v = $('bjx-input-text').value.trim();
+    if (v.length >= 8) doDecode();
+  }
+  );
+   $('bjx-clear-btn').addEventListener('click', () => {
+    $('bjx-input-text').value = '';
+    $('bjx-result-magnet').classList.remove('visible');
+    $('bjx-result-actions').style.display = 'none';
+    $('bjx-preview-content').innerHTML = '';
+    currentMagnet = '';
+  }
+  );
+   $('bjx-copy-btn').addEventListener('click', () => {
+    if (!currentMagnet) return;
+    copyText(currentMagnet);
+    const b = $('bjx-copy-btn');
+    const orig = b.textContent;
+    b.textContent = '✓ 已复制';
+    b.style.background = '#28a745';
+    setTimeout(() => {
+     b.textContent = orig;
+     b.style.background = '';
+   }
+   , 1500);
+  }
+  );
+   $('bjx-thunder-btn').addEventListener('click', () => {
+    if (!currentMagnet) return;
+    window.open('thunder://' + btoa('AA' + currentMagnet + 'ZZ'), '_blank');
+  }
+  );
+   $('bjx-preview-btn').addEventListener('click', () => {
+    if (!currentMagnet) return;
+    const magnet = /^magnet:\?/i.test(currentMagnet) ? currentMagnet : buildMagnet(currentMagnet);
+    $('bjx-preview-content').innerHTML = '<div class="bjx-loading"><div class="bjx-spinner"></div><div>正在查询资源信息…</div></div>';
+    fetchPreview(magnet, $('bjx-preview-content'));
+  }
+  );
+   // 暗号背景高亮 const encBgCb = $('bjx-enc-bg-enabled');
+   encBgCb.checked = !!cfg.encBgEnabled;
+   encBgCb.addEventListener('change', () => {
+    setSetting('encBgEnabled', encBgCb.checked);
+    applyEncColor();
+  }
+  );
+   const encColorInput = $('bjx-enc-color');
+   const encHex = $('bjx-enc-hex');
+   encColorInput.value = cfg.encColor || '#00fbff';
+   encHex.textContent = encColorInput.value;
+   applyEncColor();
+   const onEncColor = () => {
+    setSetting('encColor', encColorInput.value);
+    encHex.textContent = encColorInput.value;
+    applyEncColor();
+  }
+  ;
+   encColorInput.addEventListener('input', onEncColor);
+   encColorInput.addEventListener('change', onEncColor);
+   // 重新扫描 $('bjx-rescan-btn').addEventListener('click', () => {
+    rescan();
+    refreshCountBadge();
+  }
+  );
+ }
+  function refreshCountBadge() {
+   const el = document.getElementById('bjx-count-badge');
+   if (el) {
+    el.textContent = totalFound;
+    el.className = 'p-count' + (totalFound > 0 ? '' : ' zero');
+  }
+ }
+  function refreshHistoryBadge() {
+   const el = document.getElementById('bjx-history-badge');
+   if (el) {
+    const n = getHistory().length;
+    el.textContent = n;
+    el.style.display = n > 0 ? '' : 'none';
+  }
+ }
+  function renderHistory() {
+   const list = document.getElementById('bjx-history-list');
+   if (!list) return;
+   const data = getHistory();
+   if (!data.length) {
+    list.innerHTML = '<div style="text-align:center;
+   padding:16px;
+   color:#444;
+   font-size:12px">暂无解码历史</div>';
+    document.getElementById('bjx-history-clear-btn').style.display = 'none';
+    return;
+  }
+   let html = '';
+   data.forEach((item, i) => {
+    if (item.type === 'url') return;
+    const magnet = item.magnet || '';
+    const btih = extractBtih(magnet) || magnet;
+    const name = (item.name && item.name !== btih && item.name !== magnet) ? item.name : btih.substring(0, 16) + (btih.length > 16 ? '…' : '');
+    const attr = magnet.replace(/"/g, '&quot;
+   ');
+    html += `<div class="bjx-history-item" data-idx="${
+    i
+   }
+   " data-magnet="${
+    attr
+   }
+   "> <span class="bjx-history-name" title="${
+    attr
+   }
+   ">${
+    name
+   }
+   </span> <button class="bjx-history-btn" data-act="preview">预览</button></div>`;
+  }
+  );
+   list.innerHTML = html;
+   list.querySelectorAll('.bjx-history-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+     if (e.target.classList.contains('bjx-history-btn')) return;
+     copyText(el.dataset.magnet);
+     el.style.background = '#28a74533';
+     setTimeout(() => {
+      el.style.background = '';
+    }
+    , 600);
+   }
+   );
+  }
+  );
+   list.querySelectorAll('.bjx-history-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+     e.stopPropagation();
+     const magnet = btn.closest('.bjx-history-item').dataset.magnet;
+     showPreviewModal(magnet, null);
+   }
+   );
+  }
+  );
+   const cb = document.getElementById('bjx-history-clear-btn');
+   cb.style.display = data.length > 0 ? '' : 'none';
+ }
+  // § 12 选中文字浮钮（替代右键菜单） let selBtn = null;
+  function hideSelBtn() {
+   if (selBtn) {
+    try {
+     selBtn.remove();
+   }
+    catch (e) {
+   }
+    selBtn = null;
+  }
+ }
+  function setupSelection() {
+   document.addEventListener('mouseup', () => {
+    setTimeout(() => {
+     const sel = window.getSelection();
+     const text = sel ? sel.toString().trim() : '';
+     if (text.length >= 8 && BJX_REGEX.test(text)) {
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      hideSelBtn();
+      selBtn = document.createElement('button');
+      selBtn.id = 'bjx-sel-btn';
+      selBtn.textContent = '🔓 解码';
+      selBtn.style.left = Math.max(4, rect.left) + 'px';
+      selBtn.style.top = Math.max(4, rect.bottom + 6) + 'px';
+      selBtn.addEventListener('click', (e) => {
+       e.stopPropagation();
+       const magnet = buildMagnet(decode(text));
+       hideSelBtn();
+       window.getSelection().removeAllRanges();
+       showPreviewModal(magnet, null);
+     }
+     );
+      document.body.appendChild(selBtn);
+    }
+     else hideSelBtn();
+   }
+   , 10);
+  }
+  );
+   document.addEventListener('mousedown', (e) => {
+    if (!selBtn || !selBtn.contains(e.target)) hideSelBtn();
+  }
+  );
+ }
+  // 自动签到（Discuz! X3.4 每日签到插件，每日首次自动签到） function autoSign(force) {
+   try {
+    const cfg = getSettings();
+    if (!cfg.autoSign && !force) return;
+    const now = new Date();
+    const dateKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    if (!force && GM_getValue('bjx_lastSign', '') === dateKey) return;
+    // 今日已签到 const base = location.origin + '/';
+    const signPath = (cfg.signUrl || 'plugin.php?id=fx_checkin:list').trim();
+    const url = /^https?:\/\//i.test(signPath) ? signPath : base + signPath.replace(/^\//, '');
+    GM_xmlhttpRequest({
+     method: 'GET', url: url, headers: {
+      'User-Agent': navigator.userAgent, 'Referer': location.href, 'Accept': 'text/html' 
+    }
+    , onload: (res) => {
+      try {
+       const html = res.responseText || '';
+       if (res.status !== 200) return;
+       // 已签到（避免重复提交） if (/已签到|今日已签到|今天已经签到|您今天已经签到|您今日已签到|已经签到|连续签到/i.test(html)) {
+        GM_setValue('bjx_lastSign', dateKey);
+        return;
+      }
+       // 提取签到表单及其字段（适配多数 Discuz 签到插件） const formMatch = html.match(/<form\b[^>]*>([\s\S]*?)<\/form>/i);
+       if (!formMatch) {
+        GM_setValue('bjx_lastSign', dateKey);
+        return;
+      }
+       const formHtml = formMatch[0];
+       const actionMatch = formHtml.match(/action="([^"]*)"/i);
+       let action = actionMatch ? actionMatch[1] : url;
+       if (action) {
+        if (/^https?:\/\//i.test(action)) {
+        /* 绝对地址 */
+       }
+        else if (action.charAt(0) === '/') action = location.origin + action;
+        else action = url.split('?')[0].replace(/[^\/]*$/, '') + action;
+      }
+       else action = url;
+       const fields = {
+      }
+      ;
+       const inputRe = /<input\b[^>]*>/gi;
+       let im;
+       while ((im = inputRe.exec(formHtml)) !== null) {
+        const tag = im[0];
+        const n = (tag.match(/name="([^"]*)"/i) || [])[1];
+        if (!n) continue;
+        const v = (tag.match(/value="([^"]*)"/i) || [])[1] || '';
+        fields[n] = v;
+      }
+       if (!fields.formhash) {
+        GM_setValue('bjx_lastSign', dateKey);
+        return;
+      }
+       // 常见心情/模式字段默认值（DSU 等插件） if (fields.qdxq === undefined || fields.qdxq === '') fields.qdxq = 'qq';
+       if (fields.qdmode === undefined || fields.qdmode === '') fields.qdmode = '1';
+       if (fields.todaysay === undefined) fields.todaysay = '';
+       let data = '';
+       for (const k in fields) {
+        if (k === 'submit' || k === 'qr') continue;
+        data += (data ? '&' : '') + encodeURIComponent(k) + '=' + encodeURIComponent(fields[k] || '');
+      }
+       GM_xmlhttpRequest({
+        method: 'POST', url: action, headers: {
+         'Content-Type': 'application/x-www-form-urlencoded', 'Referer': url, 'User-Agent': navigator.userAgent, 'X-Requested-With': 'XMLHttpRequest' 
+       }
+       , data: data, onload: (r2) => {
+         GM_setValue('bjx_lastSign', dateKey);
+         if (force) showSignToast(/签到成功|恭喜|成功签到|已连续签到|签到完成|success/i.test(r2.responseText || '') ? '✅ 签到成功' : '⚠️ 已提交签到请求');
+       }
+       , onerror: () => {
+         if (force) showSignToast('❌ 签到请求失败');
+       }
+      }
+      );
+     }
+      catch (e) {
+       GM_setValue('bjx_lastSign', dateKey);
+     }
+    }
+    , onerror: () => {
+      if (force) showSignToast('❌ 无法访问签到页面');
+    }
+   }
+   );
+  }
+   catch (e) {
+  }
+ }
+  function showSignToast(msg) {
+   try {
+    let t = document.getElementById('bjx-sign-toast');
+    if (!t) {
+     t = document.createElement('div');
+     t.id = 'bjx-sign-toast';
+     t.style.cssText = 'position:fixed;
+    left:14px;
+    bottom:300px;
+    z-index:2147483647;
+    background:#1a1a2e;
+    color:#e0e0e0;
+    border:1px solid #4a4a8a;
+    border-radius:8px;
+    padding:8px 14px;
+    font-size:13px;
+    box-shadow:0 4px 16px rgba(0,0,0,.5);
+    transition:opacity .3s;
+    pointer-events:none';
+     document.body.appendChild(t);
+   }
+    t.textContent = msg;
+    t.style.opacity = '1';
+    clearTimeout(t._bjxToast);
+    t._bjxToast = setTimeout(() => {
+     t.style.opacity = '0';
+   }
+   , 2500);
+  }
+   catch (e) {
+  }
+ }
+  // § 13 菜单命令 & 初始化 function registerMenu() {
+   try {
+    GM_registerMenuCommand('🔓 打开解码面板', () => {
+     buildPanel();
+     const m = document.getElementById('bjx-panel-modal');
+     if (m) {
+      m.classList.add('visible');
+      refreshCountBadge();
+      renderHistory();
+    }
+     syncDock();
+   }
+   );
+    GM_registerMenuCommand('🔄 重新扫描本页', () => {
+     rescan();
+     refreshCountBadge();
+   }
+   );
+    GM_registerMenuCommand('⚡ 切换启用/禁用', () => {
+     isEnabled = !isEnabled;
+     setSetting('enabled', isEnabled);
+     const t = document.getElementById('bjx-toggle-switch');
+     if (t) t.checked = isEnabled;
+     if (isEnabled) {
+      scanPage();
+      startObserver();
+    }
+     else {
+      observer.disconnect();
+      updateCounter(0);
+    }
+   }
+   );
+    GM_registerMenuCommand('✅ 立即签到', () => {
+     autoSign(true);
+   }
+   );
+  }
+   catch (e) {
+  }
+ }
+  function _startScan() {
+   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => {
+    scanPage();
+    startObserver();
+    if (isWnflb) autoSign();
+  }
+  );
+   else {
+    scanPage();
+    startObserver();
+    if (isWnflb) autoSign();
+  }
+ }
+  try {
+   isEnabled = getSettings().enabled;
+   if (isEnabled) _startScan();
+   // 面板与菜单延迟构建，避免阻塞页面渲染 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => {
+    buildPanel();
+    registerMenu();
+    setupSelection();
+  }
+  );
+   else {
+    buildPanel();
+    registerMenu();
+    setupSelection();
+  }
+ }
+  catch (e) {
+ }
+}
+)();
