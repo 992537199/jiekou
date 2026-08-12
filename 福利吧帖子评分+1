@@ -1,0 +1,119 @@
+// ==UserScript==
+// @name          福利吧帖子一键 +1 评分
+// @namespace    http://tampermonkey.net/
+// @version      1.1
+// @description  在「评分」按钮旁添加「+1分」按钮，点击直接给当前帖子 +1 分（自动取 tid/pid/formhash）
+// @author       you
+// @match        *://*.wnflb2023.com/*
+// @grant        none
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    /* ====== 可调配置 ====== */
+    // 评分维度字段名，你抓包得到的 +1 分对应 score2
+    const SCORE_FIELD = 'score2';
+    // 分值（注意 Discuz 里 + 号需要保留）
+    const SCORE_VALUE = '+1';
+    // 其它维度是否需要清零，按你抓包的样子保持 score3=0
+    const EXTRA_FIELDS = { score3: '0' };
+    /* ===================== */
+
+    const rateLink = document.getElementById('ak_rate');
+    if (!rateLink) return;
+
+    // 从评分链接的 onclick 里提取 tid / pid
+    const onclick = rateLink.getAttribute('onclick') || '';
+    const tid = (onclick.match(/tid=(\d+)/) || [])[1];
+    const pid = (onclick.match(/pid=(\d+)/) || [])[1];
+    if (!tid || !pid) {
+        console.warn('[+1评分] 未从 #ak_rate 解析到 tid/pid');
+        return;
+    }
+
+    // 取 formhash（CSRF 令牌）：优先隐藏域，其次页面里任意 formhash= 值
+    function getFormHash() {
+        const inp = document.querySelector('input[name="formhash"]');
+        if (inp && inp.value) return inp.value;
+        const m = document.documentElement.innerHTML.match(/formhash[=]["']?([a-f0-9]{6,})/i);
+        return m ? m[1] : '';
+    }
+
+    // 创建 +1 分按钮，样式尽量贴近原评分按钮
+    const btn = document.createElement('a');
+    btn.href = 'javascript:;';
+    btn.id = 'ak_rate_plus1';
+    btn.title = '一键 +1 分';
+    btn.setAttribute('style', 'margin-left:8px;cursor:pointer;');
+    btn.innerHTML = '<i><img src="static/image/common/agree.gif" alt="+1">+1分</i>';
+
+    let busy = false;
+    btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (busy) return;
+
+        const formhash = getFormHash();
+        if (!formhash) {
+            alert('未找到 formhash，无法提交（请确认已登录且在帖子页面）');
+            return;
+        }
+
+        const params = new URLSearchParams();
+        params.set('formhash', formhash);
+        params.set('tid', tid);
+        params.set('pid', pid);
+        params.set('referer', encodeURIComponent(location.href));
+        params.set('handlekey', 'rate');
+        params.set(SCORE_FIELD, SCORE_VALUE);
+        for (const k in EXTRA_FIELDS) params.set(k, EXTRA_FIELDS[k]);
+        params.set('reason', '');
+
+        busy = true;
+        btn.innerHTML = '<i>提交中…</i>';
+
+        // 自动识别当前站点地址，拼出绝对请求 URL（不写死域名）
+        const endpoint = location.origin + '/forum.php?mod=misc&action=rate&ratesubmit=yes&infloat=yes&inajax=1';
+        fetch(endpoint, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: params.toString()
+        })
+            .then(function (r) { return r.text(); })
+            .then(function (text) {
+                // 提取 CDATA 里、<script> 之前的可读提示文字
+                const msg = (text.split('<script')[0] || '')
+                    .replace(/<root>|<!\[CDATA\[|\]\]>|<\/root>/g, '')
+                    .trim();
+                const isError = /errorhandle_rate/.test(text) ||
+                    /抱歉|失败|不能|无权|错误|重复/.test(msg);
+                const isSuccess = /succeedhandle_rate/.test(text) || /成功/.test(msg);
+
+                if (isSuccess && !isError) {
+                    btn.innerHTML = '<i>+1分 ✓</i>';
+                } else if (isError) {
+                    btn.innerHTML = '<i>+1分 ✗</i>';
+                    alert(msg || '评分失败');   // 弹出论坛返回的真实提示
+                } else {
+                    btn.innerHTML = '<i>+1分 ?</i>';
+                    if (msg) alert(msg);
+                }
+                setTimeout(function () {
+                    btn.innerHTML = '<i><img src="static/image/common/agree.gif" alt="+1">+1分</i>';
+                    busy = false;
+                }, 2500);
+            })
+            .catch(function (err) {
+                btn.innerHTML = '<i>+1分 ✗</i>';
+                alert('提交失败: ' + err);
+                busy = false;
+            });
+    });
+
+    // 插入到「评分」按钮之后
+    rateLink.parentNode.insertBefore(btn, rateLink.nextSibling);
+})();
