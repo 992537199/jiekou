@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         福利吧已读帖子标记（灰色+删除线）
 // @namespace    http://tampermonkey.net/
-// @version      0.1
-// @description  点击wnflb2023帖子后自动标记已读：灰色+删除线
+// @version      0.2
+// @description  自动标记已读帖子，支持异步翻页、新标签打开
 // @author       豆包
 // @match        https://www.wnflb2023.com/forum-*.html
 // @match        https://www.wnflb2023.com/forum.php?mod=forumdisplay*
@@ -10,34 +10,72 @@
 // @grant        GM_getValue
 // ==/UserScript==
 
-(function() {
+(function () {
     'use strict';
     const KEY_PREFIX = 'read_post_';
 
-    // 给所有帖子加已读样式
-    function markReadPosts() {
-        document.querySelectorAll('#threadlisttableid tbody[id^="normalthread_"], #threadlisttableid tbody[id^="stickthread_"]').forEach(tb => {
-            const tid = tb.id.replace(/\D/g, '');
-            const a = tb.querySelector('a.s.xst');
-            if (!a || !tid) return;
+    // 给单个帖子应用已读样式
+    function applyReadStyle(tbody) {
+        const tid = tbody.id.replace(/\D/g, '');
+        if (!tid) return;
+        const a = tbody.querySelector('a.s.xst');
+        if (!a) return;
 
-            // 本地存储判断是否已读
-            if (GM_getValue(KEY_PREFIX + tid, false)) {
-                a.style.color = '#999';
-                a.style.textDecoration = 'line-through';
-            }
+        if (GM_getValue(KEY_PREFIX + tid, false)) {
+            a.style.color = '#999';
+            a.style.textDecoration = 'line-through';
+        }
+    }
 
-            // 点击后标记为已读
-            a.addEventListener('click', () => {
-                GM_setValue(KEY_PREFIX + tid, true);
-                a.style.color = '#999';
-                a.style.textDecoration = 'line-through';
-            });
+    // 扫描当前页面所有帖子，刷已读样式
+    function refreshAllReadMark() {
+        document.querySelectorAll(
+            '#threadlisttableid tbody[id^="normalthread_"], #threadlisttableid tbody[id^="stickthread_"]'
+        ).forEach((tb) => {
+            applyReadStyle(tb);
         });
     }
 
-    // 页面加载完成执行
+    // 全局事件委托，不管什么时候加载出来的帖子都生效
+    document.addEventListener(
+        'click',
+        function (e) {
+            const target = e.target.closest('a.s.xst');
+            if (!target) return;
+
+            const tbody = target.closest('tbody[id]');
+            if (!tbody) return;
+            const tid = tbody.id.replace(/\D/g, '');
+            if (!tid) return;
+
+            // 标记已读 + 立刻应用样式
+            GM_setValue(KEY_PREFIX + tid, true);
+            target.style.color = '#999';
+            target.style.textDecoration = 'line-through';
+        },
+        false
+    );
+
+    // 监听页面 DOM 变化（下拉加载新帖子时自动刷新标记）
+    const observer = new MutationObserver((mutations) => {
+        refreshAllReadMark();
+    });
+
+    // 监听帖子列表容器
+    const waitContainer = setInterval(() => {
+        const listWrap = document.getElementById('threadlisttableid');
+        if (listWrap) {
+            clearInterval(waitContainer);
+            observer.observe(listWrap, {
+                childList: true,
+                subtree: true
+            });
+            refreshAllReadMark();
+        }
+    }, 300);
+
+    // 页面初次加载
     window.addEventListener('load', () => {
-        setTimeout(markReadPosts, 300);
+        setTimeout(refreshAllReadMark, 300);
     });
 })();
