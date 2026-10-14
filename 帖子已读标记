@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         福利吧已读帖子标记（灰色+删除线）
 // @namespace    http://tampermonkey.net/
-// @version      0.2
-// @description  自动标记已读帖子，支持异步翻页、新标签打开
+// @version      0.3
+// @description  自动标记已读帖子，修复iPhone Safari切后台返回标记丢失问题；支持异步翻页、新标签打开
 // @author       豆包
 // @match        https://www.wnflb2023.com/forum-*.html
 // @match        https://www.wnflb2023.com/forum.php?mod=forumdisplay*
@@ -13,69 +13,116 @@
 (function () {
     'use strict';
     const KEY_PREFIX = 'read_post_';
+    let observer = null;
+    let refreshDebounceTimer = null;
 
-    // 给单个帖子应用已读样式
+    // 添加样式表，统一管理已读样式，替代零散内联style，Safari更稳
+    function injectStyle() {
+        if(document.getElementById('read_post_mark_css')) return;
+        const css = document.createElement('style');
+        css.id = 'read_post_mark_css';
+        css.textContent = `
+            a.read-post-marked {
+                color:#999 !important;
+                text-decoration: line-through !important;
+            }
+        `;
+        document.head.appendChild(css);
+    }
+
+    function getTidFromTbody(tbody) {
+        return tbody.id.replace(/\D/g, '');
+    }
+
+    // 给单个帖子应用已读标记
     function applyReadStyle(tbody) {
-        const tid = tbody.id.replace(/\D/g, '');
+        const tid = getTidFromTbody(tbody);
         if (!tid) return;
         const a = tbody.querySelector('a.s.xst');
         if (!a) return;
-
         if (GM_getValue(KEY_PREFIX + tid, false)) {
-            a.style.color = '#999';
-            a.style.textDecoration = 'line-through';
+            a.classList.add('read-post-marked');
         }
     }
 
-    // 扫描当前页面所有帖子，刷已读样式
+    // 刷新全部帖子标记，加防抖防止频繁执行
     function refreshAllReadMark() {
-        document.querySelectorAll(
-            '#threadlisttableid tbody[id^="normalthread_"], #threadlisttableid tbody[id^="stickthread_"]'
-        ).forEach((tb) => {
-            applyReadStyle(tb);
-        });
+        clearTimeout(refreshDebounceTimer);
+        refreshDebounceTimer = setTimeout(() => {
+            document.querySelectorAll(
+                '#threadlisttableid tbody[id^="normalthread_"], #threadlisttableid tbody[id^="stickthread_"]'
+            ).forEach((tb) => {
+                applyReadStyle(tb);
+            });
+        }, 80);
     }
 
-    // 全局事件委托，不管什么时候加载出来的帖子都生效
+    // 重启DOM监听器（Safari休眠后observer会断开，需要重建）
+    function restartObserver() {
+        if(observer) observer.disconnect();
+        observer = new MutationObserver(()=> refreshAllReadMark());
+        const listWrap = document.getElementById('threadlisttableid');
+        if(listWrap){
+            observer.observe(listWrap, {
+                childList: true,
+                subtree: true
+            });
+        }
+    }
+
+    // 点击帖子标记已读（支持新标签打开，click依然触发）
     document.addEventListener(
         'click',
         function (e) {
             const target = e.target.closest('a.s.xst');
             if (!target) return;
-
             const tbody = target.closest('tbody[id]');
             if (!tbody) return;
-            const tid = tbody.id.replace(/\D/g, '');
+            const tid = getTidFromTbody(tbody);
             if (!tid) return;
-
-            // 标记已读 + 立刻应用样式
             GM_setValue(KEY_PREFIX + tid, true);
-            target.style.color = '#999';
-            target.style.textDecoration = 'line-through';
+            target.classList.add('read-post-marked');
         },
         false
     );
 
-    // 监听页面 DOM 变化（下拉加载新帖子时自动刷新标记）
-    const observer = new MutationObserver((mutations) => {
-        refreshAllReadMark();
-    });
 
-    // 监听帖子列表容器
-    const waitContainer = setInterval(() => {
-        const listWrap = document.getElementById('threadlisttableid');
-        if (listWrap) {
-            clearInterval(waitContainer);
-            observer.observe(listWrap, {
-                childList: true,
-                subtree: true
-            });
+    // ==========关键修复：监听页面可见性，切回Safari立刻重刷==========
+    document.addEventListener('visibilitychange', ()=>{
+        if(!document.hidden){
+            // 用户从后台切回页面，重启监听+全量重绘标记
+            restartObserver();
             refreshAllReadMark();
         }
-    }, 300);
+    })
 
-    // 页面初次加载
-    window.addEventListener('load', () => {
-        setTimeout(refreshAllReadMark, 300);
-    });
+    // 循环保活监听器，Safari后台休眠后容器丢失自动恢复
+    setInterval(()=>{
+        const listWrap = document.getElementById('threadlisttableid');
+        if(listWrap && observer){
+            // 检查是否还在监听目标，断开则重启
+            if(observer.takeRecords && observer.takeRecords().length === 0){
+                // 无操作，正常
+            }
+        }else{
+            restartObserver();
+            refreshAllReadMark();
+        }
+    }, 1200);
+
+
+    // 初始化入口
+    function init(){
+        injectStyle();
+        restartObserver();
+        refreshAllReadMark();
+    }
+
+    // 多时机初始化，兼容Safari各种加载时序
+    if(document.readyState === "complete" || document.readyState === "interactive"){
+        setTimeout(init,200);
+    }else{
+        document.addEventListener('DOMContentLoaded', ()=> setTimeout(init,200));
+    }
+    window.addEventListener('load', ()=> setTimeout(init, 300));
 })();
