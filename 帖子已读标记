@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         福利吧已读帖子标记（灰色+删除线）
+// @name         福利吧已读帖子标记（灰色+删除线｜Safari后台休眠修复版）
 // @namespace    http://tampermonkey.net/
-// @version      0.3
-// @description  自动标记已读帖子，修复iPhone Safari切后台返回标记丢失问题；支持异步翻页、新标签打开
+// @version      0.4
+// @description  彻底修复iPhone Safari长时间切后台标记消失问题；pageshow页面恢复事件优先，异步翻页、新标签打开支持
 // @author       豆包
 // @match        https://www.wnflb2023.com/forum-*.html
 // @match        https://www.wnflb2023.com/forum.php?mod=forumdisplay*
@@ -16,7 +16,6 @@
     let observer = null;
     let refreshDebounceTimer = null;
 
-    // 添加样式表，统一管理已读样式，替代零散内联style，Safari更稳
     function injectStyle() {
         if(document.getElementById('read_post_mark_css')) return;
         const css = document.createElement('style');
@@ -34,7 +33,6 @@
         return tbody.id.replace(/\D/g, '');
     }
 
-    // 给单个帖子应用已读标记
     function applyReadStyle(tbody) {
         const tid = getTidFromTbody(tbody);
         if (!tid) return;
@@ -45,7 +43,6 @@
         }
     }
 
-    // 刷新全部帖子标记，加防抖防止频繁执行
     function refreshAllReadMark() {
         clearTimeout(refreshDebounceTimer);
         refreshDebounceTimer = setTimeout(() => {
@@ -54,23 +51,34 @@
             ).forEach((tb) => {
                 applyReadStyle(tb);
             });
-        }, 80);
+        }, 60);
     }
 
-    // 重启DOM监听器（Safari休眠后observer会断开，需要重建）
-    function restartObserver() {
-        if(observer) observer.disconnect();
-        observer = new MutationObserver(()=> refreshAllReadMark());
-        const listWrap = document.getElementById('threadlisttableid');
-        if(listWrap){
-            observer.observe(listWrap, {
-                childList: true,
-                subtree: true
-            });
+    function destroyObserver(){
+        if(observer){
+            observer.disconnect();
+            observer = null;
         }
     }
 
-    // 点击帖子标记已读（支持新标签打开，click依然触发）
+    function restartObserver() {
+        destroyObserver();
+        const listWrap = document.getElementById('threadlisttableid');
+        if(!listWrap) return;
+        observer = new MutationObserver(()=> refreshAllReadMark());
+        observer.observe(listWrap, {
+            childList: true,
+            subtree: true
+        });
+    }
+
+    function fullInit(){
+        injectStyle();
+        restartObserver();
+        refreshAllReadMark();
+    }
+
+    // 点击帖子标记已读
     document.addEventListener(
         'click',
         function (e) {
@@ -86,43 +94,24 @@
         false
     );
 
+    // ==========核心修复：pageshow 是iOS Safari页面从后台缓存恢复最可靠事件==========
+    window.addEventListener('pageshow', ()=>{
+        // 页面从后台恢复，直接完整重建全部功能、重绘标记
+        fullInit();
+    })
 
-    // ==========关键修复：监听页面可见性，切回Safari立刻重刷==========
     document.addEventListener('visibilitychange', ()=>{
         if(!document.hidden){
-            // 用户从后台切回页面，重启监听+全量重绘标记
-            restartObserver();
-            refreshAllReadMark();
+            fullInit();
         }
     })
 
-    // 循环保活监听器，Safari后台休眠后容器丢失自动恢复
-    setInterval(()=>{
-        const listWrap = document.getElementById('threadlisttableid');
-        if(listWrap && observer){
-            // 检查是否还在监听目标，断开则重启
-            if(observer.takeRecords && observer.takeRecords().length === 0){
-                // 无操作，正常
-            }
-        }else{
-            restartObserver();
-            refreshAllReadMark();
-        }
-    }, 1200);
-
-
     // 初始化入口
-    function init(){
-        injectStyle();
-        restartObserver();
-        refreshAllReadMark();
-    }
-
-    // 多时机初始化，兼容Safari各种加载时序
     if(document.readyState === "complete" || document.readyState === "interactive"){
-        setTimeout(init,200);
+        setTimeout(fullInit,150);
     }else{
-        document.addEventListener('DOMContentLoaded', ()=> setTimeout(init,200));
+        document.addEventListener('DOMContentLoaded', ()=> setTimeout(fullInit,150));
     }
-    window.addEventListener('load', ()=> setTimeout(init, 300));
+    window.addEventListener('load', ()=> setTimeout(fullInit, 250));
+
 })();
